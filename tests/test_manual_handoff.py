@@ -1,9 +1,11 @@
 """人工交还控制协议：离线测试，不启动浏览器或读取真实 profile。"""
 
 import asyncio
+import io
 import json
 import sys
 import unittest
+from contextlib import redirect_stderr
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -125,29 +127,20 @@ class ManualBridgeTests(unittest.IsolatedAsyncioTestCase):
 
 
 class ManualCliTests(unittest.TestCase):
-    def test_cli_exposes_eight_profiles_and_defaults_to_auto(self):
-        base = ["--project-root", "/fixture", "--verify-access"]
-        self.assertEqual(runner._parser().parse_args(base).browser_profile, "auto")
-        self.assertEqual(len(scraper.APPROVED_PROFILE_IDS), 8)
-        for profile_id in scraper.APPROVED_PROFILE_IDS:
-            args = runner._parser().parse_args(base + ["--browser-profile", profile_id])
-            self.assertEqual(args.browser_profile, profile_id)
+    def test_cli_no_longer_selects_or_injects_browser_profiles(self):
+        with patch.object(runner, "_bound_project_root") as bind, redirect_stderr(io.StringIO()) as errors:
+            with self.assertRaises(SystemExit):
+                runner.main(["--browser-profile", "auto"])
+        bind.assert_not_called()
+        self.assertIn("当前已有浏览器工具", errors.getvalue())
 
-    def test_manual_mode_is_explicit_interactive_single_worker(self):
-        base = ["--project-root", "/fixture", "--manual-list-handoff"]
-        with patch.object(runner.sys.stdin, "isatty", return_value=True):
-            args = runner._parser().parse_args(base + ["--verify-access"])
-            runner._validate_mode_args(args)
-            for tail in (["--verify-access", "--headless"], ["--verify-access", "--historical-list-preflight"],
-                         ["--detail-shards", "2"]):
-                with self.subTest(tail=tail), self.assertRaises(ValueError):
-                    runner._validate_mode_args(runner._parser().parse_args(base + tail))
-            runner._validate_mode_args(runner._parser().parse_args(base))
-            canonical = runner._parser().parse_args(["--project-root", "/fixture", "--manual-access"])
-            self.assertTrue(canonical.manual_list_handoff)
-            runner._validate_mode_args(canonical)
-        with patch.object(runner.sys.stdin, "isatty", return_value=False), self.assertRaises(ValueError):
-            runner._validate_mode_args(args)
+    def test_old_manual_cli_is_replaced_by_host_agent_handoff(self):
+        for option in ("--manual-access", "--manual-list-handoff"):
+            with self.subTest(option=option), patch.object(runner, "_bound_project_root") as bind, redirect_stderr(io.StringIO()) as errors:
+                with self.assertRaises(SystemExit):
+                    runner.main([option])
+            bind.assert_not_called()
+            self.assertIn("skills/shopee-ugreen-topsales/assets/run_prompt_template.md", errors.getvalue())
 
 
 if __name__ == "__main__":

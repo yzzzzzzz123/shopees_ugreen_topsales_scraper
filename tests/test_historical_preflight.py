@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = ROOT / "skills/shopee-ugreen-topsales/scripts"
 sys.path.insert(0, str(SCRIPTS))
-import run_scrape as runner  # noqa: E402
+import excel  # noqa: E402
 import scraper  # noqa: E402
 from test_scraper import FIXTURE_VERSION, fingerprint
 
@@ -52,35 +52,9 @@ def profile_context():
 
 
 class PreflightConfigurationTests(unittest.IsolatedAsyncioTestCase):
-    async def test_cli_defaults_off_and_passes_explicit_switch_to_verify_and_full_modes(self) -> None:
+    async def test_historical_library_configuration_defaults_off(self) -> None:
         self.assertFalse(scraper.BrowserConfig(browser_profile="windows-intel", chrome_version=FIXTURE_VERSION, region=US_REGION).historical_list_preflight)
-        for enabled in (False, True):
-            for verify in (False, True):
-                with self.subTest(enabled=enabled, verify=verify):
-                    argv = ["--project-root", "/unused-fixture-root"]
-                    if enabled:
-                        argv.append("--historical-list-preflight")
-                    if verify:
-                        argv.extend(["--verify-access", "--reference-workbook", "/unused-reference.xlsx"])
-                    args = runner._parser().parse_args(argv)
-                    self.assertIs(args.historical_list_preflight, enabled)
-                    with (
-                        patch.object(runner, "verify_access", new=AsyncMock(return_value={})) as access,
-                        patch.object(runner, "scrape_all", new=AsyncMock(side_effect=scraper.ScrapeError("离线透传结束"))) as scrape,
-                        patch.object(runner, "_validate_daily_run"),
-                        patch.object(runner, "_check_output_directory"),
-                        patch.object(runner, "write_excel") as publish,
-                    ):
-                        if verify:
-                            await runner._run(args)
-                            self.assertIs(access.await_args.args[0].historical_list_preflight, enabled)
-                            scrape.assert_not_awaited()
-                        else:
-                            with self.assertRaisesRegex(scraper.ScrapeError, "离线透传结束"):
-                                await runner._run(args)
-                            self.assertIs(scrape.await_args.args[0].historical_list_preflight, enabled)
-                            access.assert_not_awaited()
-                        publish.assert_not_called()
+        self.assertTrue(config(enabled=True).historical_list_preflight)
 
 
 class PreflightTraversalTests(unittest.IsolatedAsyncioTestCase):
@@ -154,10 +128,6 @@ class PreflightTraversalTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(captured_pages, [(1, None), (0, 2)])
 
     async def test_failed_full_preflight_never_publishes_or_starts_detail_capture(self) -> None:
-        args = runner._parser().parse_args([
-            "--project-root", "/unused-fixture-root", "--historical-list-preflight",
-            "--chrome-executable", __file__,
-        ])
         with (
             patch.object(scraper, "detect_browser_region", new=AsyncMock(return_value=US_REGION)),
             patch.object(scraper, "_chrome_version", new=AsyncMock(return_value=FIXTURE_VERSION)),
@@ -165,12 +135,10 @@ class PreflightTraversalTests(unittest.IsolatedAsyncioTestCase):
             patch.object(scraper, "_capture_list_page_with_profile", new=AsyncMock(side_effect=scraper.ScrapeError("预访问失败"))) as capture,
             patch.object(scraper, "_clone_detail_profiles") as clone,
             patch.object(scraper, "_launch_contexts", new_callable=AsyncMock) as details,
-            patch.object(runner, "_validate_daily_run"),
-            patch.object(runner, "_check_output_directory"),
-            patch.object(runner, "write_excel") as publish,
+            patch.object(excel, "write_excel") as publish,
         ):
             with self.assertRaisesRegex(scraper.ScrapeError, "预访问失败"):
-                await runner._run(args)
+                await scraper.scrape_all(config())
         self.assertEqual(capture.await_count, 1)
         self.assertEqual(capture.await_args.args[1], 1)
         clone.assert_not_called()
@@ -204,7 +172,7 @@ class PreflightVerificationTests(unittest.IsolatedAsyncioTestCase):
             ))))
             stack.enter_context(patch.object(scraper, "_park_and_wait", new_callable=AsyncMock))
             sleep = stack.enter_context(patch.object(scraper.asyncio, "sleep", new_callable=AsyncMock))
-            publish = stack.enter_context(patch.object(runner, "write_excel"))
+            publish = stack.enter_context(patch.object(excel, "write_excel"))
             if fatal:
                 with self.assertRaises(scraper.CaptureCleanupError):
                     await scraper.verify_access(browser_config, Path("/unused-reference.xlsx"))

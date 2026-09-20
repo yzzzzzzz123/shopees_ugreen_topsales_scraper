@@ -1,370 +1,211 @@
-"""离线验证 runner 的诊断/发布边界；不启动浏览器或连接网站。"""
+"""宿主 Agent 入口的离线交接测试；不访问网站、不改真实 Git/工作簿。"""
 
 from __future__ import annotations
 
-import asyncio
+import builtins
 import io
 import json
 import sys
 import tempfile
 import unittest
-from contextlib import nullcontext, redirect_stderr, redirect_stdout
-from datetime import date, datetime
+from contextlib import redirect_stderr, redirect_stdout
+from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import Mock, patch
 
 
 SCRIPTS = Path(__file__).resolve().parents[1] / "skills/shopee-ugreen-topsales/scripts"
 sys.path.insert(0, str(SCRIPTS))
-import run_scrape as runner  # noqa: E402
-
-
-def verification(*, listing: bool = True, success: int = 3, attempted: int = 3, target: int = 3) -> dict:
-    return {
-        "mode": "verify_access",
-        "list_pass": listing,
-        "details": [{"item_id": str(index)} for index in range(attempted)],
-        "detail_success_count": success,
-        "detail_attempted_count": attempted,
-        "detail_target_count": target,
-        "full_crawl_completed": False,
-        "workbook_written": False,
-        "说明": "仅验证访问",
-    }
+import run_scrape as runner
 
 
 class RunnerTests(unittest.TestCase):
     def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.skill = self.root / runner.SKILL_RELATIVE
+        for name in runner.CONTRACT_DOCUMENTS:
+            document = self.skill / name
+            document.parent.mkdir(parents=True, exist_ok=True)
+            document.write_text("# Offline fixture", encoding="utf-8")
+        (self.skill / "assets/ugreen_topsales.xlsx").write_bytes(b"schema placeholder; plan never parses business values")
         clock_patch = patch.object(runner, "datetime")
         self.clock = clock_patch.start()
         self.addCleanup(clock_patch.stop)
-        self.clock.now.side_effect = lambda zone=None: datetime(2026, 9, 17, 12, tzinfo=zone)
+        self.clock.now.side_effect = lambda zone: datetime(2026, 9, 20, 12, tzinfo=zone)
+        bind_patch = patch.object(runner, "_bound_project_root", return_value=self.root)
+        self.bind = bind_patch.start()
+        self.addCleanup(bind_patch.stop)
+        self.daily = self.root / "worktrees/20260920_ugreen_topsales"
 
-    def args(self, root: Path, *extra: str):
-        return runner._parser().parse_args(["--project-root", str(root), *extra])
+    def invoke(self, *options, stdin="", modules=None):
+        out, err = io.StringIO(), io.StringIO()
+        with patch.object(sys, "stdin", io.StringIO(stdin)), patch.dict(sys.modules, modules or {}), redirect_stdout(out), redirect_stderr(err):
+            code = runner.main(list(options))
+        return code, out.getvalue(), err.getvalue()
 
-    def daily_output(self, root: Path, compact: str = "20260917") -> Path:
-        return root / "worktrees" / f"{compact}_ugreen_topsales/result/ugreen_topsales.xlsx"
+    def bound_options(self, mode):
+        return (mode, "--project-root", str(self.root), "--worktree", str(self.daily))
 
-    def test_defaults_are_serial_and_slow(self):
-        args = self.args(Path("/example"))
-        self.assertEqual(args.detail_shards, 1)
-        self.assertEqual(args.list_interval_seconds, 10)
-        self.assertEqual(args.detail_interval_seconds, 10)
+    def test_default_is_read_only_full_store_plan_not_completed_crawl(self):
+        before = {str(p.relative_to(self.root)): p.read_bytes() for p in self.root.rglob("*") if p.is_file()}
+        code, output, errors = self.invoke()
+        plan = json.loads(output)
+        self.assertEqual((code, errors), (0, ""))
+        self.assertEqual(plan["status"], "awaiting_browser_collection")
+        self.assertEqual(plan["mode"], "full_store_top_sales")
+        self.assertEqual(plan["taskbook"], str(self.skill / "assets/run_prompt_template.md"))
+        self.assertEqual(plan["excel_contract"], str(self.skill / "assets/ugreen_topsales.xlsx"))
+        self.assertEqual(plan["expected_output"], str(self.daily / "result/ugreen_topsales.xlsx"))
+        self.assertEqual(plan["run_date"], "2026-09-20")
+        self.assertEqual(plan["branch"], "daily/20260920-ugreen-topsales")
+        self.assertEqual(plan["shop_id"], "64922227")
+        self.assertEqual(plan["minimum_interval_seconds"], 10)
+        self.assertEqual(set(plan["contract_documents"]), set(runner.CONTRACT_DOCUMENTS))
+        self.assertGreater(len(plan["required_steps"]), 1)
+        self.assertIs(plan["full_crawl_completed"], False)
+        self.assertIs(plan["workbook_written"], False)
+        self.assertFalse(self.daily.exists())
+        after = {str(p.relative_to(self.root)): p.read_bytes() for p in self.root.rglob("*") if p.is_file()}
+        self.assertEqual(after, before)
+        self.clock.now.assert_called_once()
+        self.assertEqual(self.clock.now.call_args.args[0].key, "Asia/Shanghai")
 
-    def test_intervals_cannot_speed_up_or_be_nonfinite(self):
-        for option in ("--list-interval-seconds", "--detail-interval-seconds"):
-            for value in ("0", "9.9", "-1", "nan", "inf", "abc"):
-                with self.subTest(option=option, value=value), redirect_stderr(io.StringIO()):
-                    with self.assertRaises(SystemExit):
-                        self.args(Path("/example"), option, value)
-        self.assertEqual(self.args(Path("/example"), "--detail-interval-seconds", "30").detail_interval_seconds, 30)
+    def test_explicit_plan_and_default_match(self):
+        self.assertEqual(self.invoke(), self.invoke("--plan", "--project-root", str(self.root)))
 
-    def test_verify_ignores_unknown_result_files_and_never_publishes(self):
+    def test_plan_does_not_import_any_browser_or_publication_module(self):
+        imported = []
+        real_import = builtins.__import__
+
+        def record(name, *args, **kwargs):
+            imported.append(name)
+            if name in {"scraper", "browser_fingerprint", "playwright", "publish_result", "validate_result"}:
+                raise AssertionError(f"unexpected import: {name}")
+            return real_import(name, *args, **kwargs)
+
+        with patch("builtins.__import__", side_effect=record):
+            self.assertEqual(self.invoke("--plan")[0], 0)
+        self.assertNotIn("scraper", imported)
+
+    def test_plan_rejects_missing_contract_without_creating_it(self):
+        (self.skill / "assets/run_prompt_template.md").unlink()
+        code, output, errors = self.invoke()
+        self.assertEqual((code, output), (1, ""))
+        self.assertIn("run_prompt_template.md", errors)
+        self.assertFalse((self.root / "worktrees").exists())
+
+    def test_contract_symlink_is_rejected(self):
+        original = self.skill / "assets/run_prompt_template.md"
+        original.unlink()
+        original.symlink_to(self.skill / "SKILL.md")
+        self.assertEqual(self.invoke("--plan")[0], 1)
+
+    def test_prepare_delegates_frozen_current_date_without_claiming_crawl(self):
+        prepare = Mock(return_value={"status": "created", "worktree": str(self.daily)})
+        code, output, _ = self.invoke("--prepare", "--date", "2026-09-20", modules={"prepare_daily_worktree": SimpleNamespace(prepare=prepare)})
+        self.assertEqual(code, 0)
+        prepare.assert_called_once_with("2026-09-20")
+        self.assertEqual(json.loads(output)["status"], "created")
+        self.assertFalse(self.daily.exists())
+
+    def test_prepare_defaults_to_shanghai_today(self):
+        prepare = Mock(return_value={"status": "reused"})
+        self.assertEqual(self.invoke("--prepare", modules={"prepare_daily_worktree": SimpleNamespace(prepare=prepare)})[0], 0)
+        prepare.assert_called_once_with("2026-09-20")
+
+    def test_prepare_refuses_other_dates_and_invalid_dates_before_mutation(self):
+        for supplied in ("2026-09-19", "2026-09-21", "20260920", "2026-9-20", "not-a-date"):
+            prepare = Mock()
+            with self.subTest(supplied=supplied):
+                code, output, _ = self.invoke("--prepare", "--date", supplied, modules={"prepare_daily_worktree": SimpleNamespace(prepare=prepare)})
+                self.assertEqual((code, output), (1, ""))
+                prepare.assert_not_called()
+
+    def test_prepare_dirty_state_failure_is_not_cleaned_or_retried(self):
+        prepare = Mock(side_effect=ValueError("主项目存在未提交改动"))
+        code, output, errors = self.invoke("--prepare", modules={"prepare_daily_worktree": SimpleNamespace(prepare=prepare)})
+        self.assertEqual((code, output), (1, ""))
+        self.assertIn("未提交改动", errors)
+        prepare.assert_called_once()
+
+    def test_publish_forwards_only_stdin_object_and_exact_output_identity(self):
+        payload = {"schema_version": "1.0", "pages": [], "details": []}
+        receipt = {"status": "published", "path": str(self.daily / "result/ugreen_topsales.xlsx")}
+        publish = Mock(return_value=receipt)
+        code, output, errors = self.invoke(*self.bound_options("--publish-stdin"), stdin=json.dumps(payload), modules={"publish_result": SimpleNamespace(publish=publish)})
+        self.assertEqual((code, errors), (0, ""))
+        publish.assert_called_once_with(payload, self.root, self.daily)
+        self.assertEqual(json.loads(output), receipt)
+        self.assertFalse(self.daily.exists())
+
+    def test_publish_requires_strict_json_object_and_does_not_read_paths(self):
+        for value in ("", "/old.xlsx", '"/old.xlsx"', "[]", "null", '{"x":NaN}', '{"x":Infinity}', '{"x":1,"x":2}', '{}{}'):
+            publish = Mock()
+            with self.subTest(value=value):
+                code, output, _ = self.invoke(*self.bound_options("--publish-stdin"), stdin=value, modules={"publish_result": SimpleNamespace(publish=publish)})
+                self.assertEqual((code, output), (1, ""))
+                publish.assert_not_called()
+
+    def test_publish_failure_has_no_success_receipt(self):
+        publish = Mock(side_effect=ValueError("缺少本轮详情"))
+        code, output, errors = self.invoke(*self.bound_options("--publish-stdin"), stdin="{}", modules={"publish_result": SimpleNamespace(publish=publish)})
+        self.assertEqual((code, output), (1, ""))
+        self.assertIn("缺少本轮详情", errors)
+
+    def test_validate_delegates_explicit_paths_and_exit_code(self):
+        validate = Mock(return_value=2)
+        code, output, _ = self.invoke(*self.bound_options("--validate"), modules={"validate_result": SimpleNamespace(main=validate)})
+        self.assertEqual((code, output), (2, ""))
+        validate.assert_called_once_with(["--project-root", str(self.root), "--worktree", str(self.daily)])
+
+    def test_check_contract_uses_shared_read_only_schema_validator(self):
+        check = Mock(return_value={"path": str(self.skill / "assets/ugreen_topsales.xlsx"), "sha256": "fixture"})
+        code, output, _ = self.invoke("--check-contract", modules={"publish_result": SimpleNamespace(validate_template_contract=check)})
+        self.assertEqual(code, 0)
+        check.assert_called_once_with(self.root)
+        result = json.loads(output)
+        self.assertEqual(result["status"], "contract_checked")
+        self.assertIs(result["full_crawl_completed"], False)
+        self.assertIs(result["workbook_written"], False)
+
+    def test_check_contract_schema_mismatch_fails(self):
+        check = Mock(side_effect=ValueError("表头不匹配"))
+        code, output, errors = self.invoke("--check-contract", modules={"publish_result": SimpleNamespace(validate_template_contract=check)})
+        self.assertEqual((code, output), (1, ""))
+        self.assertIn("表头不匹配", errors)
+
+    def test_argument_errors_precede_root_binding_or_actions(self):
+        cases = (["--publish-stdin"], ["--validate"], ["--validate", "--worktree", str(self.daily)],
+                 ["--publish-stdin", "--project-root", str(self.root)], ["--plan", "--prepare"],
+                 ["--worktree", str(self.daily)], ["--date", "2026-09-20"], ["--pub"])
+        for options in cases:
+            self.bind.reset_mock()
+            with self.subTest(options=options), redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as raised:
+                runner.main(options)
+            self.assertEqual(raised.exception.code, 2)
+            self.bind.assert_not_called()
+
+    def test_keyboard_interrupt_does_not_claim_completion(self):
+        self.bind.side_effect = KeyboardInterrupt()
+        code, output, errors = self.invoke()
+        self.assertEqual((code, output), (130, ""))
+        self.assertIn("未宣称", errors)
+
+
+class ProjectBindingTests(unittest.TestCase):
+    def test_explicit_other_root_is_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            output = root / "result/ugreen_topsales.xlsx"
-            output.parent.mkdir()
-            output.write_bytes(b"previous valid workbook")
-            unknown = output.parent / "user-notes.txt"
-            unknown.write_text("do not delete", encoding="utf-8")
-            access = AsyncMock(return_value=verification())
-            with patch.object(runner, "verify_access", access), patch.object(runner, "scrape_all", AsyncMock()) as scrape, patch.object(runner, "write_excel") as publish, patch.object(runner, "_validate_daily_run") as daily:
-                result = asyncio.run(runner._run(self.args(root, "--verify-access")))
-            self.assertEqual(result["mode"], "verify_access")
-            scrape.assert_not_called()
-            publish.assert_not_called()
-            daily.assert_not_called()
-            self.assertEqual(access.call_args.args[1], output.resolve())
-            self.assertEqual(access.call_args.args[0].detail_interval_ms, 10_000)
-            self.assertEqual(output.read_bytes(), b"previous valid workbook")
-            self.assertEqual(unknown.read_text(encoding="utf-8"), "do not delete")
-            self.assertFalse((root / "worktrees").exists())
-
-    def test_verify_can_take_explicit_reference(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            reference = root / "old-reference.xlsx"
-            access = AsyncMock(return_value=verification())
-            with patch.object(runner, "verify_access", access), patch.object(runner, "_default_reference", side_effect=AssertionError("explicit reference must not select a default")):
-                asyncio.run(runner._run(self.args(root, "--verify-access", "--reference-workbook", str(reference), "--list-interval-seconds", "20")))
-            self.assertEqual(access.call_args.args[1], reference.resolve())
-            self.assertEqual(access.call_args.args[0].list_interval_ms, 20_000)
-            self.assertFalse((root / "result").exists())
-
-    def test_verify_uses_latest_daily_reference_without_writing(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            references = {
-                root / "result/ugreen_topsales.xlsx": b"legacy main workbook",
-                self.daily_output(root, "20260915"): b"older daily workbook",
-                self.daily_output(root, "20260916"): b"latest prior workbook",
-                self.daily_output(root, "20260918"): b"future workbook",
-            }
-            for path, content in references.items():
-                path.parent.mkdir(parents=True)
-                path.write_bytes(content)
-            access = AsyncMock(return_value=verification())
-            with patch.object(runner, "verify_access", access), patch.object(runner, "write_excel") as publish, patch.object(runner, "_validate_daily_run") as daily:
-                asyncio.run(runner._run(self.args(root, "--verify-access")))
-            self.assertEqual(access.call_args.args[1], self.daily_output(root, "20260916").resolve())
-            publish.assert_not_called()
-            daily.assert_not_called()
-            self.assertFalse(self.daily_output(root).parent.exists())
-            for path, content in references.items():
-                self.assertEqual(path.read_bytes(), content)
-
-    def test_default_reference_prefers_today_over_older_and_future_workbooks(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            for compact in ("20260916", "20260917", "20260918"):
-                path = self.daily_output(root, compact)
-                path.parent.mkdir(parents=True)
-                path.write_bytes(compact.encode())
-            legacy = root / "result/ugreen_topsales.xlsx"
-            legacy.parent.mkdir()
-            legacy.write_bytes(b"legacy")
-            self.assertEqual(runner._default_reference(root, date(2026, 9, 17)), self.daily_output(root))
-            self.assertEqual(legacy.read_bytes(), b"legacy")
-
-    def test_default_reference_falls_back_to_main_when_only_future_daily_exists(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            future = self.daily_output(root, "20260918")
-            future.parent.mkdir(parents=True)
-            future.write_bytes(b"future")
-            legacy = root / "result/ugreen_topsales.xlsx"
-            legacy.parent.mkdir()
-            legacy.write_bytes(b"legacy")
-            self.assertEqual(runner._default_reference(root, date(2026, 9, 17)), legacy)
-            self.assertEqual(legacy.read_bytes(), b"legacy")
-            self.assertEqual(future.read_bytes(), b"future")
-            self.assertFalse(self.daily_output(root).parent.exists())
-
-    def test_default_reference_requires_an_existing_workbook_without_creating_paths(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            with self.assertRaises(FileNotFoundError):
-                runner._default_reference(root, date(2026, 9, 17))
-            self.assertEqual(list(root.iterdir()), [])
-
-    def test_full_mode_checks_daily_state_before_crawl_and_publication(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            output = self.daily_output(root)
-            preserved = {
-                root / "result/ugreen_topsales.xlsx": b"legacy main workbook",
-                root / "result/user-notes.txt": b"main notes must not block publication",
-                self.daily_output(root, "20260916"): b"previous day workbook",
-            }
-            for path, content in preserved.items():
-                path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_bytes(content)
-            events = []
-
-            async def scrape(*args, **kwargs):
-                events.append("crawl")
-                return SimpleNamespace(audit=SimpleNamespace(list_page_count=2), products=[1])
-
-            def publish(result, target):
-                events.append("publish")
-                self.assertEqual(target, output)
-                target.parent.mkdir(parents=True)
-                target.write_bytes(b"new workbook")
-                return target
-
-            with patch.object(runner, "_validate_daily_run", side_effect=lambda root, run_date: events.append("daily_check")), patch.object(runner, "scrape_all", scrape), patch.object(runner, "write_excel", publish), redirect_stderr(io.StringIO()):
-                self.assertEqual(asyncio.run(runner._run(self.args(root))), output)
-            self.assertEqual(events, ["daily_check", "crawl", "daily_check", "publish"])
-            self.assertEqual(output.read_bytes(), b"new workbook")
-            for path, content in preserved.items():
-                self.assertEqual(path.read_bytes(), content)
-
-    def test_full_run_keeps_starting_shanghai_date_across_midnight(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            output = self.daily_output(root)
-            started = datetime(2026, 9, 17, 23, 59)
-            finished = datetime(2026, 9, 18, 0, 1)
-            now = [started]
-
-            async def scrape(*args, **kwargs):
-                now[0] = finished
-                return SimpleNamespace(audit=SimpleNamespace(list_page_count=1), products=[1])
-
-            def publish(result, target):
-                self.assertEqual(target, output)
-                target.parent.mkdir(parents=True)
-                target.write_bytes(b"new workbook")
-                return target
-
-            with patch.object(runner, "datetime") as clock, patch.object(runner, "_validate_daily_run") as daily, patch.object(runner, "scrape_all", scrape), patch.object(runner, "write_excel", publish), patch.object(runner, "_progress"):
-                clock.now.side_effect = lambda zone: now[0].replace(tzinfo=zone)
-                self.assertEqual(asyncio.run(runner._run(self.args(root))), output)
-            self.assertEqual(now[0], finished)
-            self.assertEqual([call.args for call in daily.call_args_list], [(root, date(2026, 9, 17)), (root, date(2026, 9, 17))])
-            clock.now.assert_called_once()
-            self.assertEqual(clock.now.call_args.args[0].key, "Asia/Shanghai")
-            self.assertTrue(output.is_file())
-            self.assertFalse(self.daily_output(root, "20260918").parent.exists())
-            self.assertFalse((root / "result").exists())
-
-    def test_changes_during_crawl_prevent_publication(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            output = self.daily_output(root)
-            output.parent.mkdir(parents=True)
-            output.write_bytes(b"old workbook")
-            result = SimpleNamespace(audit=SimpleNamespace(list_page_count=1), products=[1])
-            with patch.object(runner, "_validate_daily_run", side_effect=[None, ValueError("主项目存在改动")]), patch.object(runner, "scrape_all", AsyncMock(return_value=result)), patch.object(runner, "write_excel") as publish, redirect_stderr(io.StringIO()):
-                with self.assertRaisesRegex(ValueError, "改动"):
-                    asyncio.run(runner._run(self.args(root)))
-            publish.assert_not_called()
-            self.assertEqual(output.read_bytes(), b"old workbook")
-
-    def test_crawl_failure_preserves_existing_daily_and_main_workbooks(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            preserved = {
-                self.daily_output(root): b"existing daily workbook",
-                root / "result/ugreen_topsales.xlsx": b"legacy main workbook",
-                self.daily_output(root, "20260916"): b"previous day workbook",
-            }
-            for path, content in preserved.items():
-                path.parent.mkdir(parents=True)
-                path.write_bytes(content)
-            with patch.object(runner, "_validate_daily_run"), patch.object(runner, "scrape_all", AsyncMock(side_effect=runner.ScrapeError("详情抓取失败"))), patch.object(runner, "write_excel") as publish:
-                with self.assertRaisesRegex(runner.ScrapeError, "详情抓取失败"):
-                    asyncio.run(runner._run(self.args(root)))
-            publish.assert_not_called()
-            for path, content in preserved.items():
-                self.assertEqual(path.read_bytes(), content)
-
-    def test_unknown_daily_result_file_prevents_full_crawl_and_is_preserved(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            unknown = self.daily_output(root).parent / "user.txt"
-            unknown.parent.mkdir(parents=True)
-            unknown.write_text("preserve", encoding="utf-8")
-            with patch.object(runner, "_validate_daily_run"), patch.object(runner, "scrape_all", AsyncMock()) as scrape:
-                with self.assertRaisesRegex(ValueError, "非目标文件"):
-                    asyncio.run(runner._run(self.args(root)))
-            scrape.assert_not_called()
-            self.assertEqual(unknown.read_text(encoding="utf-8"), "preserve")
-            self.assertFalse((root / "result").exists())
-
-    def test_unknown_file_created_during_crawl_prevents_publication(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            output = self.daily_output(root)
-            output.parent.mkdir(parents=True)
-            output.write_bytes(b"old workbook")
-
-            async def scrape(*args, **kwargs):
-                (output.parent / "user.txt").write_text("preserve")
-                return SimpleNamespace(audit=SimpleNamespace(list_page_count=1), products=[1])
-
-            with patch.object(runner, "_validate_daily_run"), patch.object(runner, "scrape_all", scrape), patch.object(runner, "write_excel") as publish, redirect_stderr(io.StringIO()):
-                with self.assertRaisesRegex(ValueError, "非目标文件"):
-                    asyncio.run(runner._run(self.args(root)))
-            publish.assert_not_called()
-            self.assertEqual(output.read_bytes(), b"old workbook")
-            self.assertEqual((output.parent / "user.txt").read_text(), "preserve")
-
-    def test_main_verification_exit_codes_and_machine_readable_output(self):
-        cases = ((verification(), 0), (verification(listing=False), 2), (verification(success=2), 2), (verification(success=0, attempted=0), 2))
-        for payload, expected in cases:
-            with self.subTest(expected=expected, payload=payload):
-                out, err = io.StringIO(), io.StringIO()
-                with patch.object(runner, "_bound_project_root", return_value=Path("/example")), patch.object(runner, "_exclusive_run_lock", return_value=nullcontext()), patch.object(runner, "_run", AsyncMock(return_value=payload)), redirect_stdout(out), redirect_stderr(err):
-                    code = runner.main(["--project-root", "/example", "--verify-access"])
-                self.assertEqual(code, expected)
-                self.assertEqual(json.loads(out.getvalue()), payload)
-                self.assertIn("仅验证访问", out.getvalue())
-                self.assertIn("不是完整抓取", err.getvalue())
-
-    def test_main_verification_rejects_false_publication_claim(self):
-        payload = verification()
-        payload["full_crawl_completed"] = True
-        with patch.object(runner, "_bound_project_root", return_value=Path("/example")), patch.object(runner, "_exclusive_run_lock", return_value=nullcontext()), patch.object(runner, "_run", AsyncMock(return_value=payload)), redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
-            self.assertEqual(runner.main(["--project-root", "/example", "--verify-access"]), 1)
-
-    def test_main_verification_does_not_pass_an_unfinished_target(self):
-        payload = verification(success=2, attempted=2, target=3)
-        with patch.object(runner, "_bound_project_root", return_value=Path("/example")), patch.object(runner, "_exclusive_run_lock", return_value=nullcontext()), patch.object(runner, "_run", AsyncMock(return_value=payload)), redirect_stdout(io.StringIO()) as out, redirect_stderr(io.StringIO()):
-            self.assertEqual(runner.main(["--project-root", "/example", "--verify-access"]), 2)
-        self.assertEqual(json.loads(out.getvalue())["detail_target_count"], 3)
-
-    def test_main_runtime_exception_returns_one(self):
-        with patch.object(runner, "_bound_project_root", return_value=Path("/example")), patch.object(runner, "_exclusive_run_lock", return_value=nullcontext()), patch.object(runner, "_run", AsyncMock(side_effect=ValueError("测试失败"))), redirect_stderr(io.StringIO()):
-            self.assertEqual(runner.main(["--project-root", "/example", "--verify-access"]), 1)
-
-    def test_reference_not_allowed_for_full_refresh(self):
-        with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
-            runner.main(["--project-root", "/example", "--reference-workbook", "/old.xlsx"])
-
-    def test_same_lock_excludes_another_run(self):
-        with tempfile.TemporaryDirectory() as directory:
-            lock = Path(directory) / "shared.lock"
-            with runner._exclusive_run_lock(lock):
-                with self.assertRaisesRegex(ValueError, "另一个"):
-                    with runner._exclusive_run_lock(lock):
-                        self.fail("second run acquired the shared lock")
-            with runner._exclusive_run_lock(lock):
-                pass
-
-
-class DailyPublicationTests(unittest.TestCase):
-    def check(self, root: Path, *, dirty: str | None = None, same_head=True, branch=None):
-        daily = root / "worktrees/20260917_ugreen_topsales"
-        source = daily / "skills/shopee-ugreen-topsales/scripts/run_scrape.py"
-        calls = []
-
-        def git_read(where, *args):
-            calls.append((where, args))
-            if args == ("rev-parse", "--show-toplevel"):
-                return str(daily)
-            if args == ("symbolic-ref", "--quiet", "--short", "HEAD"):
-                return branch or "daily/20260917-ugreen-topsales"
-            if args == ("status", "--porcelain", "--untracked-files=all"):
-                return " M user.py" if (dirty == "main" and where == root) or (dirty == "daily" and where == daily) else ""
-            if args == ("rev-parse", "HEAD"):
-                return "same" if same_head or where == root else "different"
-            self.fail(f"unexpected Git command: {args}")
-
-        with patch.object(runner, "__file__", str(source)), patch.object(runner, "datetime") as clock, patch.object(runner, "_git_read", side_effect=git_read):
-            clock.now.side_effect = lambda zone: datetime(2026, 9, 17, 23, 0, tzinfo=zone)
-            runner._validate_daily_run(root)
-        return calls
-
-    def test_clean_same_head_daily_path_is_allowed(self):
-        with tempfile.TemporaryDirectory() as directory:
-            calls = self.check(Path(directory))
-        self.assertEqual(sum(args[0] == "status" for _, args in calls), 2)
-        self.assertTrue(all(args[0] in {"rev-parse", "symbolic-ref", "status"} for _, args in calls))
-
-    def test_dirty_main_or_daily_is_rejected(self):
-        with tempfile.TemporaryDirectory() as directory:
-            for dirty in ("main", "daily"):
-                with self.subTest(dirty=dirty), self.assertRaisesRegex(ValueError, "未提交改动"):
-                    self.check(Path(directory), dirty=dirty)
-
-    def test_different_head_is_rejected(self):
-        with tempfile.TemporaryDirectory() as directory, self.assertRaisesRegex(ValueError, "HEAD 不一致"):
-            self.check(Path(directory), same_head=False)
-
-    def test_wrong_branch_is_rejected(self):
-        with tempfile.TemporaryDirectory() as directory, self.assertRaisesRegex(ValueError, "分支不符"):
-            self.check(Path(directory), branch="daily/old")
-
-    def test_main_project_runner_cannot_publish(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            with patch.object(runner, "__file__", str(root / "skills/shopee-ugreen-topsales/scripts/run_scrape.py")), patch.object(runner, "_git_read") as git:
-                with self.assertRaisesRegex(ValueError, "每日 worktree"):
-                    runner._validate_daily_run(root)
-            git.assert_not_called()
+            root = Path(directory).resolve()
+            with patch.dict(sys.modules, {"prepare_daily_worktree": SimpleNamespace(_project_root=Mock(return_value=root))}):
+                self.assertEqual(runner._bound_project_root(None), root)
+                self.assertEqual(runner._bound_project_root(root), root)
+                with self.assertRaisesRegex(ValueError, "当前 Skill"):
+                    runner._bound_project_root(root / "other")
+                with self.assertRaisesRegex(ValueError, "不能包含"):
+                    runner._bound_project_root(root / "child/..")
 
 
 if __name__ == "__main__":
