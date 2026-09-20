@@ -35,6 +35,7 @@ shopees_ugreen_topsales_scraper/
 │   │   ├── excel-output.md              # 四表内容合同
 │   │   ├── worktree.md                  # 本文件：目录与生命周期
 │   │   ├── capture-protocol.md          # 现场内存数据协议
+│   │   ├── cua-fallback.md              # Playwright 不可用时的原 Chrome 只读备用路线
 │   │   ├── extraction_contract.md       # 兼容路由，无第二份规范
 │   │   └── verified_access.md           # 历史证据，不是执行指令
 │   └── scripts/                         # 确定性准备、交接、导出、校验等

@@ -4,6 +4,11 @@
 通过 stdin 的单个 UTF-8 JSON 对象交给 `run_scrape.py --publish-stdin`。
 本协议不是 HTTP 接口，不要求新建浏览器连接或保存 JSON 文件。
 
+Playwright 主路线（含地区/指纹/JS）的工具适配能力不足、原页正常且无未解决的部分配置时，
+可按 [cua-fallback.md](cua-fallback.md) 使用 CUA
+读取同一原 Chrome 的详情 DOM/商品内嵌 JSON。备用路线仍提交本协议的相同载荷；
+控制台回传使用的读取标记、分块包装、诊断字段不得进入最终 pages/cards/details。
+
 只接受完整 PH UGREEN 全量载荷，不提供抽测发布或历史清单回填分支。
 每层对象字段须恰好匹配下表；缺字段、额外字段、重复 JSON 键、NaN/Infinity 均拒绝。
 `null` 仅用于下述明确允许的字段，不能用来跳过未知的必需数据。
