@@ -4,9 +4,9 @@
 通过 stdin 的单个 UTF-8 JSON 对象交给 `run_scrape.py --publish-stdin`。
 本协议不是 HTTP 接口，不要求新建浏览器连接或保存 JSON 文件。
 
-Playwright 主路线（含地区/指纹/JS）的工具适配能力不足、原页正常且无未解决的部分配置时，
-可按 [cua-fallback.md](cua-fallback.md) 使用 CUA
-读取同一原 Chrome 的详情 DOM/商品内嵌 JSON。备用路线仍提交本协议的相同载荷；
+普通 Playwright 接管人工已打开的原 Chrome；用户指定 CUA，或 Playwright 工具不可用
+且原页正常时，可按 [cua-fallback.md](cua-fallback.md) 用电脑操作接管同一原 Chrome，
+读取详情 DOM/商品内嵌 JSON；用户明确只用 A 时不自动切换。两条路线都不做环境注入，提交本协议的相同载荷；
 控制台回传使用的读取标记、分块包装、诊断字段不得进入最终 pages/cards/details。
 
 只接受完整 PH UGREEN 全量载荷，不提供抽测发布或历史清单回填分支。

@@ -12,14 +12,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "skills/shopee-ugreen-topsales/scripts"))
 import scraper
-from test_scraper import FIXTURE_VERSION, US_REGION, card, probe
+from test_scraper import card
 
 
 def valid_payload(item_id="100"):
     return {
         "challenge": False,
         "location_identity": {"shop_id": scraper.SHOP_ID, "item_id": item_id},
-        "canonical_present": False, "og_present": False, "stealth_probe": probe(),
+        "canonical_present": False, "og_present": False,
         "bff": {"item": {"shop_id": scraper.SHOP_ID, "item_id": item_id,
                          "title": "本次详情", "models": [{"model_id": "123"}],
                          "images": ["main-current", "secondary-current"]}},
@@ -57,7 +57,7 @@ class FakePage:
 
 class ManualDetailsTests(unittest.IsolatedAsyncioTestCase):
     def config(self, **kwargs):
-        return scraper.BrowserConfig(browser_profile="windows-intel", chrome_version=FIXTURE_VERSION, region=US_REGION, manual_list_handoff=True, **kwargs)
+        return scraper.BrowserConfig(manual_list_handoff=True, **kwargs)
 
     async def test_handoff_keeps_same_page_until_resume_then_reads_without_renavigation(self):
         page, product = FakePage(), card()
@@ -127,10 +127,9 @@ class ManualDetailsTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(page.evaluate.await_count, 2)
                 page.goto.assert_awaited_once()
 
-    async def test_resume_still_requires_identity_probe_skus_and_gallery(self):
+    async def test_resume_still_requires_identity_skus_and_gallery(self):
         changes = (
             lambda p: p.update(canonical_present=True, canonical_identity={"shop_id": scraper.SHOP_ID, "item_id": "999"}),
-            lambda p: p["stealth_probe"].update(platform="wrong"),
             lambda p: p["bff"]["item"].update(item_id="999"),
             lambda p: p["bff"]["item"].update(models=[]),
             lambda p: p["bff"]["item"].update(images=[]),
@@ -292,7 +291,7 @@ class ManualDetailsTests(unittest.IsolatedAsyncioTestCase):
         page = FakePage()
         with patch.object(scraper, "_wait_for_manual_resume", new_callable=AsyncMock) as wait:
             with self.assertRaises(scraper.AccessChallengeError):
-                await scraper._visit_detail(page, card(), 1, scraper.BrowserConfig(browser_profile="windows-intel", chrome_version=FIXTURE_VERSION, region=US_REGION))
+                await scraper._visit_detail(page, card(), 1, scraper.BrowserConfig())
         wait.assert_not_awaited()
         page.goto.assert_awaited_once()
 

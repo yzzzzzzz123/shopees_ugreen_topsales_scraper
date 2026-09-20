@@ -15,16 +15,13 @@ SCRIPTS = ROOT / "skills/shopee-ugreen-topsales/scripts"
 sys.path.insert(0, str(SCRIPTS))
 import excel  # noqa: E402
 import scraper  # noqa: E402
-from test_scraper import FIXTURE_VERSION, fingerprint
-
-US_REGION = scraper.BrowserRegion("US", "en-US", ("en-US", "en"), "America/New_York")
 
 
 PROFILE = Path("/unused-fixture-profile")
 
 
 def config(*, enabled=True, interval=10_000) -> scraper.BrowserConfig:
-    return scraper.BrowserConfig(browser_profile="windows-intel", chrome_version=FIXTURE_VERSION, region=US_REGION,
+    return scraper.BrowserConfig(
         chrome_executable=Path(__file__), historical_list_preflight=enabled,
         list_interval_ms=interval,
     )
@@ -53,7 +50,7 @@ def profile_context():
 
 class PreflightConfigurationTests(unittest.IsolatedAsyncioTestCase):
     async def test_historical_library_configuration_defaults_off(self) -> None:
-        self.assertFalse(scraper.BrowserConfig(browser_profile="windows-intel", chrome_version=FIXTURE_VERSION, region=US_REGION).historical_list_preflight)
+        self.assertFalse(scraper.BrowserConfig().historical_list_preflight)
         self.assertTrue(config(enabled=True).historical_list_preflight)
 
 
@@ -129,8 +126,6 @@ class PreflightTraversalTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_failed_full_preflight_never_publishes_or_starts_detail_capture(self) -> None:
         with (
-            patch.object(scraper, "detect_browser_region", new=AsyncMock(return_value=US_REGION)),
-            patch.object(scraper, "_chrome_version", new=AsyncMock(return_value=FIXTURE_VERSION)),
             patch.object(scraper, "_temporary_chrome_profile_base", return_value=profile_context()),
             patch.object(scraper, "_capture_list_page_with_profile", new=AsyncMock(side_effect=scraper.ScrapeError("预访问失败"))) as capture,
             patch.object(scraper, "_clone_detail_profiles") as clone,

@@ -82,7 +82,7 @@ class RunnerTests(unittest.TestCase):
 
         def record(name, *args, **kwargs):
             imported.append(name)
-            if name in {"scraper", "browser_fingerprint", "playwright", "publish_result", "validate_result"}:
+            if name in {"scraper", "playwright", "publish_result", "validate_result"}:
                 raise AssertionError(f"unexpected import: {name}")
             return real_import(name, *args, **kwargs)
 

@@ -7,6 +7,26 @@
 当前 `run_scrape.py` 已是计划/准备/确定性交接入口，本身不自动访问网页。
 一次成功、接口可连接或本地测试都不证明全店完成或生产无人值守稳定。
 
+## 2026-09-20 路线简化与普通 Playwright 实测
+
+用户最终确认：A 为普通 Playwright 接管人工已打开的 Chrome；B 为电脑操作 CUA
+接管人工已打开的 Chrome。项目的指纹配置、地区查询、环境注入脚本及专用测试已按
+授权删除，历史记录中的旧指纹配置/恢复配方也已移除。下文剩余访问结果仅记录当时
+观察，不能作为当前依赖或执行要求；历史日期快照与成果保持原样。
+
+- 通过项目 `.venv` 中 Python Playwright 1.63.0 的
+  `connect_over_cdp("chrome", no_defaults=True)` 连接用户已开启调试的原 Chrome，
+  实例版本 `153.0.8010.50`。未启动替代浏览器，不新增配置或初始化脚本。
+- 原店铺列表第 1/27 页，30 个唯一商品，读到标题、链接、价格和月销文字。
+- 商品 `1159521988`：真实 models 6 个，规格和 SKU 图片映射齐全；正常打开图片查看器
+  后取得完整 9 张图库原图 URL（1 主图 + 8 副图），身份与必需字段核验通过。
+- 商品 `7604706539`：取得 12 个真实 model 和 Color/Length 两层规格。临时提取草案
+  将普通选项文字误当图片 ID，尚未完成图片验收时用户要求停止；不记作第二件全部通过。
+- 停止时断开本次 Playwright 附着连接，保留原 Chrome/商品页；没有生成正式 Excel。
+
+此前 B 的现场证据：27 页/810 个唯一商品链接；两件详情的 6/12 SKU、各 9 张图库原图
+及 SKU 图映射。这些都是各次现场验证结果，不能合并为一次全店全部详情成功。
+
 ## 2026-09-20 当前页面有限抽测
 
 主线 Agent 使用现有浏览器工具读取普通 Chrome 当前页面，正常点击 Top Sales、分页和
@@ -32,53 +52,6 @@ SKU model ID 及规格/图片映射。导航 query 中的单个 model ID 不是 
 这些段落保留当时的参数和事实，其中“当前/本轮/应当/运行”等措辞仅指记录当时。
 复制 profile、注入、GeoIP、启动 browser/context 和旧 runner 的指令均已被当前默认
 路线取代。解释历史不等于获准复现历史行为；未经新授权不执行其中命令。
-
-## 历史配置与证据边界（2026-09-18）
-
-- 八套本地兼容性配置以共享 `scripts/browser-profiles.json` 为唯一目录，实际 Chrome 版本
-  从安装的二进制读取。固定 Chrome 153、固定美国地区、旧 JS 字节数及哈希仅属于下方
-  历史记录；新模板的身份以实际文件和验证为准，不照抄旧哈希或测试数量。
-- 当前仍在本机 macOS Chrome 运行；配置目录不是多操作系统虚拟机或真实 GPU 仿真。
-  Windows UA 的 `Win64; x64` 与兼容字段 `navigator.platform=Win32` 不矛盾；原生
-  UA-CH 未伪造，可能与测试声明不同。不能把页面探针值匹配扩张为所有 API、Worker、
-  网络与硬件都一致。原注入八类已知 API 语义缺陷仍保留，参数化不是缺陷修复。
-- 地区查询由空白临时 Chrome 正常继承系统代理访问 `ipwho.is`，只使用成功标志、国家
-  和 IANA 时区。失败停止，不默认美国；国家映射仅配置 locale/languages，GPU 不表示
-  国籍。检测不修改系统代理、原用户 profile 或上海业务日期。
-- 本轮报告的 `SG/en-SG/Asia/Singapore` 仅是地区查询结果，不是 Shopee 可达或全店采集
-  证据。系统代理按域分流时，查询域与 Shopee 可以使用不同出口。
-- 当前采集器仍限 PH UGREEN：店铺 `64922227`、货币 `PHP`、`down-ph` 图片规则。
-  SG 店铺 URL 尚待用户确认；未经地址确认、代码适配和实时验收，不宣称支持 SG。
-- 同一轮列表、详情、普通故障重试和人工恢复保持同一配置。本次扩充不修改已有有界
-  重试或人工接管流程，不追加次数、不因失败自动切换设备身份/代理。人工模式保留
-  同一窗口正常处理；非人工模式按既有上限结束，仍拒收任何验证页或无效数据。
-- 本次配置开发和本地验证不启动新一轮 Shopee 采集。不能以历史成功、地区查询成功、
-  本地测试或源码哈希宣称新配置已通过站点验证，也不能保证任何配置一定采集成功。
-
-## 历史配置：Chrome 153 + 美国地区（曾被后续配置取代）
-
-用户先要求“修正指纹对应153”，随后明确要求“统一美国”。仅在主项目根更新配置：
-
-- 已安装 Chrome 核验为 `153.0.8010.50`；列表 Node 与详情 Python 的 UA 均固定使用
-  `Chrome/153.0.0.0`，不自动随机化或随浏览器升级变化。
-- 原 JS 的兼容占位 `chrome.runtime.getManifest().version` 由 `122.0.0.0` 改为
-  `153.0.0.0`；它不是浏览器官方版本检测 API，不能单独证明真实版本。
-- 列表 Node 与详情 Python 的 context locale 均改为 `en-US`、timezone 改为
-  `America/New_York`；纽约时区自动适用夏令时。JS language 为 `en-US`，languages
-  由 `en-US/en/zh-CN` 改为 `en-US/en`，不再混入菲律宾 locale 或中文语言偏好。
-- 其他注入项不变。脚本为 142 行、4,838 字节，当前 SHA-256 为
-  `8ab425af17a3d127d72e056e3df9166231284bb6281e2af0cac97d5c6b9e8a33`；Python 与 Node
-  哈希校验同步更新。回归测试将版本与语言列表还原后校验原始历史哈希，防止无关注入项漂移。
-- `Win32`、窗口尺寸、会话复制和系统代理行为不变；保留原生 Client Hints，不附加新
-  覆写、不调整重试或挑战页验收。worktree 与工作簿业务日期仍按 `Asia/Shanghai`，
-  不改主机或日常 Chrome 设置。用户自行管理系统代理，本次不检查或调整代理；浏览器
-  地区设置不能作为公网出口国家的独立证明。
-- 本次只做本地测试，不访问 Shopee、不修改代理、登录状态或日期 worktree，不生成 Excel。
-  版本与地区对齐不等于访问限制解除，也不证明当前配置已完成网站复测。
-
-以下内容均为历史观察，其中的“当前／本轮”只指相应记录当时。Chrome 122、固定 153、
-菲律宾/美国固定配置和旧哈希不得作为现运行参数，历史行为也不能扩张为自动重试授权。历史成功和失败记录保留，
-不改写为新配置或新地区的验证结果。
 
 ## 历史记录：人工验证后接管（2026-09-18 Chrome 122）
 
@@ -192,53 +165,7 @@ HTTP/API、URL、探针、分页及商品字段；不落 HTML、不滚动、不�
 WAL/SHM，结束时仍整体清理。此次生命周期修正保留了原始注入及全部分页、身份、SKU/图库
 验收；后续 JS 修整见下文。流程对齐本身不证明实时访问已经恢复。
 
-## 历史浏览器配置
-
-- 实测浏览器：本机 `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome`，
-  早先记录版本 `152.0.7977.84`，不是 Chrome for Testing。
-- 历史 Node 依赖声明为 Playwright `^1.58.2`。后续找到旧项目 2026-09-16 16:47（上海）
-  的 npm 安装日志：`2026-09-16T08_47_38_521Z-debug-0.log` 第 9、26、41、59–60、63、72 行
-  记录旧项目 cwd、`--prefix env/node`、根 `playwright@1.63.0` 及其嵌套
-  `playwright-core@1.63.0` 实际添加、退出 0。这与成功脚本 `require('playwright')` 路径
-  对应；同次 CLI 依赖的 alpha 版本不是该路径。没有成功进程内直接打印版本的记录，
-  不能排除安装后的未记录修改。当前 Python `playwright==1.63.0`、`openpyxl==3.1.5`
-  仍是现项目依赖，不用它们代替上述历史安装证据。
-- 会话：从本机真实 Chrome Default 复制必要状态到新的私有临时 profile，在副本上
-  启动 persistent context。原 profile 不启动、不修改；不导出 Cookie 值。
-- 网络：系统代理。本轮系统网络使用本机代理服务；项目不保存其地址或凭据，不恢复
-  Goldrush，不加 `--no-proxy-server`，不切换代理池。
-- 原完整 JS：旧 `playwright-cli/scripts/proxy-access.js` 的 `buildStealthScript`
-  实际生成内容，宽高替换为 `1366×768` 后为 4,847 字节，SHA-256 为
-  `0917c37fcfba7718f79bd6ec9d63996b7e07c23e88fe19f87e3b096799ef9128`。
-  本轮已按用户最新要求恢复上述原始字节与哈希。
-- Context UA：`Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36`。
-- Context locale `en-PH`、timezone `Asia/Manila`、viewport/screen `1366×768`，
-  `ignore_https_errors=True`。中间曾改为美国配置，本轮已恢复以上历史参数。
-  UA 的 122 是声明值，不是当前 Chrome 二进制版本。
-- 在创建页面前注册初始化脚本。保留 `--disable-blink-features=AutomationControlled`，
-  忽略默认 `--use-mock-keychain` 和 `--password-store=basic`；不加额外 DNT/Upgrade 请求头。
-
-旧代码中带账号的代理启动部分不属于 JS 修整范围，不把历史凭据复制回项目。
-
-## 历史：人工接管之前的恢复配置与验证范围
-
-当时用户要求只复现昨日实际成功方法、不走人工验证路线。这取代前一轮美国配置：
-原始完整 JS、context locale `en-PH`、timezone `Asia/Manila`、固定 Windows Chrome 122 UA
-均恢复；不启用人工验证等待开关。未经用户许可不得删除或替换原注入项；已证实问题逐项最小处理。
-菲律宾店铺 URL 保持原样，每日日更目录仍按上海日期命名。
-
-- 本机 Chrome 最近核验版本为 `153.0.8010.50`；本轮 UA 固定为历史 Windows Chrome 122，
-  不随本机主版本生成。保留 Chrome 原生 Client Hints，不伪造其版本以宣称完全一致。
-- Context viewport/screen `1366×768`；JS 语言列表为 `en-US/en/zh-CN`、language 为
-  `en-US`、平台为 `Win32`，保留 8 核/8 GB、0 触摸点及
-  `webdriver=undefined`。不叠加随机请求头、不轮换身份、不伪造 Cookie 或登录状态。
-- `proxy-access.js` 恢复标记清除、全局属性过滤、chrome、permissions、plugins、硬件/PDF、
-  screen/outer 和 WebGL 全部原注入项。重复执行失败、插件普通数组、权限普通对象、
-  WebGL/属性 getter 的接收对象检查缺失等局限仍在；`tests/test_proxy_access_runtime.py`
-  明确记录这些已知局限，不得写成已修复、支持幂等或保留相应原生 API。
-- 当前 JS 为 142 行、4,847 字节，SHA-256：
-  `0917c37fcfba7718f79bd6ec9d63996b7e07c23e88fe19f87e3b096799ef9128`，与历史原始内容一致。
-  临时会话、系统代理、读取时机和数据验收要求保持不变。
+## 历史运行时与内部实现记录
 
 已验证 Python Playwright 支持临时环境变量 `PLAYWRIGHT_NODEJS_PATH=/opt/homebrew/bin/node`，
 可使用已安装的系统 Node 26.5 对齐昨日 Node 运行版本，替代默认自带的 Node 24.21。
@@ -285,28 +212,6 @@ worktree 或结果。没有人工验证，没有安装运行时或修改代理�
 两轮 PDP 均 `3/3` 通过，SKU `6/2/4`、图片 `9/9/8`；退出码均为 `2`，未生成或覆盖
 Excel，历史工作簿哈希保持不变。这证明当前 Node/HTML 路径已实际复测，不能再写成
 完全未测；它仍没有列表成功结果，也不能用这两轮结果替代新预访问顺序的实际验证。
-
-### 前一轮美国配置的测试记录
-
-前一轮美国配置、移除 `zh-CN` 的完整注入恢复版（SHA
-`4e82e346a6999903f88cbb3bac471c04158200181f04016ec973b4f70b76fa4a`）
-本地 Chrome 测试通过 1 项主测试（10 个子用例覆盖原注入、美国配置、
-Client Hints、iframe 和探针）；8 个 `expectedFailure` 复现原基线已知缺陷，不能算作修复通过。
-
-此前精简版（SHA `ff9f0d6c573f90a9814ecc2799704ea3087747c255068aa9abff66ce8e5562b1`）
-曾通过原生 API、重复注入等 13 项本地检查；这些结论只属于已弃用的精简版，不能套用到
-完整恢复版。精简版随后真实复测结果为列表 `/verify/captcha`、商品卡 `0`、注入探针通过，
-PDP 抽查 `3/3`、退出码 `2`，未生成或覆盖 Excel。
-
-上述美国配置的完整注入恢复版随后由一个全新 agent 独立读取 Skill 并运行既有复测入口：列表仍进入
-`/verify/captcha`、商品卡与结果区域均为 `0`、页面探针通过；跨来源页 `1/15/28` 的
-PDP `3/3` 通过（SKU `6/2/4`，图片 `9/9/8`），退出 `2`。历史表哈希未变，未创建
-今日 worktree 或结果文件。用户随后明确不走人工验证码路线，要求继续核对并复现
-昨天实际成功的方法；未采用人工验证等待开关。
-
-修整前本地检查观察到 UA 声明 Chrome 122，但 Client Hints 为 Chrome 153/Windows；
-这确认了版本声明差异，不能推断其是 Shopee 阻断原因。本地 API 检查或配置一致不代表
-站点放行、完整 Windows 设备仿真或 IP 地区发生变化。
 
 ## 历史读取时间与慢抓
 
