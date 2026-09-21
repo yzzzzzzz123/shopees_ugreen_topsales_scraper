@@ -11,6 +11,8 @@ from pathlib import Path
 from typing import Sequence
 from zoneinfo import ZoneInfo
 
+from pacing import PACING_SPEED_MULTIPLIER, paced_wait_seconds
+
 
 SKILL_RELATIVE = Path("skills/shopee-ugreen-topsales")
 CONTRACT_DOCUMENTS = (
@@ -88,11 +90,12 @@ def _plan(root: Path, run_date: date) -> dict:
         "store_url": "https://shopee.ph/ugreen.ph?page=0&sortBy=sales&tab=0",
         "shop_id": "64922227",
         "currency": "PHP",
-        "minimum_interval_seconds": 2,
-        "maximum_interval_seconds": 3,
+        "pacing_speed_multiplier": PACING_SPEED_MULTIPLIER,
+        "minimum_interval_seconds": paced_wait_seconds(2),
+        "maximum_interval_seconds": paced_wait_seconds(3),
         "randomized_navigation_interval": True,
         "batch_size": 50,
-        "batch_cooldown_seconds": {"minimum": 180, "maximum": 300},
+        "batch_cooldown_seconds": {"minimum": paced_wait_seconds(180), "maximum": paced_wait_seconds(300)},
         "checkpoint_every_details": 50,
         "checkpoint_output": str(worktree / "result/ugreen_topsales_progress.xlsx"),
         "flush_checkpoint_on_stop": True,
@@ -104,9 +107,10 @@ def _plan(root: Path, run_date: date) -> dict:
             "宿主 Agent 读取原 Chrome 目标页，确认 PH UGREEN 与 Top Sales；Playwright 每轮只建立一次长连接，检查、采集、保存和冷却复用同一连接与原 page，不频繁重连或重复触发授权。",
             "页面后台或失焦不暂停、不因此断开；普通读页/输入超时和解析失败由宿主自动恢复，不要求用户确认，不抢回焦点。",
             "A 路线每页按 Skill 第 4 节调用 page_browse.py：正常页检查、分段滚轮与随机停留，最终 DOM 离线解析；滚动不保证免验证码。",
-            "单路以每次随机 2～3 秒导航间隔读取本轮全部列表页；列表页和卡片不计入详情批次。",
+            "人为等待统一按原值除以 2.5；导航间隔 0.8～1.2 秒，驻留、滚轮、批间冷却和普通重试退避同步缩短；不缩短加载/操作超时上限，不跳过完整性或验证码检查。",
+            "单路以每次随机 0.8～1.2 秒导航间隔读取本轮全部列表页；列表页和卡片不计入详情批次。",
             "逐个访问本轮每个唯一商品详情，核对身份、完整 model/SKU 和图库；缺字段不编造。",
-            "详情阶段每完成 50 个商品累计保存进度 Excel，再随机冷却 3～5 分钟；停止和结束时保存不足 50 件的尾批。",
+            "详情阶段每完成 50 个商品累计保存进度 Excel，再随机冷却 72～120 秒；停止和结束时保存不足 50 件的尾批。",
             "只有现场验证码/人工验证才立即断开、保存并交用户；普通超时自动恢复续跑，不把工具时限当验证码，不绕过登录/访问限制。",
             "将完整现场数据按 references/capture-protocol.md 通过 stdin JSON 交给 --publish-stdin；不落盘原始数据。",
             "独立执行 --validate，核对四表与抓取核验；全部通过后才交付日期 Excel。",

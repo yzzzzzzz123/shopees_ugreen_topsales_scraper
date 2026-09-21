@@ -6,7 +6,7 @@ import random
 import sys
 from types import SimpleNamespace
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'skills/shopee-ugreen-topsales/scripts'))
 from page_browse import BrowserHandoff, BrowseInterrupted, CaptchaDetected, DetachFailed, read_page_after_browsing
@@ -168,6 +168,30 @@ class PageBrowseTests(unittest.TestCase):
         self.assertGreaterEqual(len(result.wheel_deltas), 3)
         self.assertEqual(tuple(e[2] for e in events if e[0] == 'wheel'), result.wheel_deltas)
         self.assertTrue(all(e[1] == 0 for e in events if e[0] == 'wheel'))
+
+    def test_all_deliberate_waits_are_2_5_times_faster_without_changing_browsing(self):
+        saw_backscroll = False
+        saw_forward_only = False
+        for seed in range(20):
+            baseline, accelerated = self.make_page(), self.make_page()
+            with patch('page_browse.paced_wait_seconds', side_effect=lambda seconds: seconds):
+                before = read_page_after_browsing(
+                    baseline, wheel_origin=(600, 300), check_html=Mock(), rng=random.Random(seed),
+                )
+            after = read_page_after_browsing(
+                accelerated, wheel_origin=(600, 300), check_html=Mock(), rng=random.Random(seed),
+            )
+            self.assertEqual(before, after)
+            self.assertEqual(baseline.content.call_count, accelerated.content.call_count)
+            old_waits = baseline.wait_for_timeout.call_args_list
+            new_waits = accelerated.wait_for_timeout.call_args_list
+            self.assertEqual(len(old_waits), len(new_waits))
+            for old, new in zip(old_waits, new_waits):
+                self.assertAlmostEqual(old.args[0] / new.args[0], 2.5)
+            saw_backscroll |= any(delta < 0 for delta in after.wheel_deltas)
+            saw_forward_only |= all(delta > 0 for delta in after.wheel_deltas)
+        self.assertTrue(saw_backscroll)
+        self.assertTrue(saw_forward_only)
 
     def test_challenge_login_and_unrelated_pages_receive_no_input(self):
         for url in (

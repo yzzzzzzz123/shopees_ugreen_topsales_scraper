@@ -13,6 +13,7 @@ from typing import Callable
 from urllib.parse import urlsplit
 
 from list_html import _identity
+from pacing import paced_wait_seconds
 
 
 class BrowseInterrupted(RuntimeError):
@@ -122,7 +123,7 @@ def read_page_after_browsing(
     _guard_page(page, expected_url)
 
     def pause(low: float, high: float) -> None:
-        page.wait_for_timeout(rng.uniform(low, high) * 1000)
+        page.wait_for_timeout(paced_wait_seconds(rng.uniform(low, high)) * 1000)
         _guard_page(page, expected_url)
 
     pause(2.0, 4.0)
