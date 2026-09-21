@@ -299,7 +299,7 @@ def _check_destination(target: Path, candidate: Path | None = None) -> None:
             raise ValueError("本次临时候选路径异常")
 
 
-def _gates(root: Path, daily: Path, started: datetime, candidate: Path | None = None) -> tuple[Path, str, str]:
+def _gates(root: Path, daily: Path, started: datetime, candidate: Path | None = None) -> tuple[Path, str]:
     _safe_path(root)
     _safe_path(daily)
     _safe_path(root / ".git")
@@ -313,19 +313,12 @@ def _gates(root: Path, daily: Path, started: datetime, candidate: Path | None = 
     branch = _git(daily, "symbolic-ref", "--quiet", "--short", "HEAD").stdout.strip()
     if branch != f"daily/{compact}-ugreen-topsales":
         raise ValueError("日期 worktree 分支与启动日不匹配")
-    for label, path in (("主项目", root), ("日期 worktree", daily)):
-        if _git(path, "status", "--porcelain", "--untracked-files=all").stdout.strip():
-            raise ValueError(f"{label}存在未提交改动；不会自动处理 Git")
-        _git(path, "ls-files", "--error-unmatch", "--", str(TEMPLATE_RELATIVE))
-    head = _git(root, "rev-parse", "HEAD").stdout.strip()
-    if head != _git(daily, "rev-parse", "HEAD").stdout.strip():
-        raise ValueError("主项目和日期 worktree 必须为同一已提交 HEAD")
     root_spec = validate_template_contract(root)
     daily_spec = validate_template_contract(daily)
     if root_spec["sha256"] != daily_spec["sha256"]:
         raise ValueError("主项目和日期 worktree 的只读规范 SHA-256 不一致")
     _check_destination(target, candidate)
-    return target, root_spec["sha256"], head
+    return target, root_spec["sha256"]
 
 
 @contextmanager
@@ -345,13 +338,13 @@ def _exclusive_publish(root: Path):
 
 
 def publish(payload: dict, project_root: Path, worktree: Path) -> dict:
-    """严格校验现场载荷，在 clean 同 HEAD 的启动日 worktree 原子发布。"""
+    """校验现场载荷并在启动日 worktree 原子发布，不以 Git 状态阻断。"""
     result, started = _convert(payload)
     root, daily = _safe_path(project_root), _safe_path(worktree)
     # 注册关系与执行位置先于创建锁/结果目录检查，拒绝越界路径不产生文件。
-    target, template_hash, head = _gates(root, daily, started)
+    target, template_hash = _gates(root, daily, started)
     with _exclusive_publish(root):
-        if _gates(root, daily, started) != (target, template_hash, head):
+        if _gates(root, daily, started) != (target, template_hash):
             raise ValueError("取得任务锁前发布前置状态发生变化")
         target.parent.mkdir(exist_ok=True)
         descriptor, name = tempfile.mkstemp(prefix=".ugreen-publish-", suffix=".xlsx", dir=target.parent)
@@ -363,8 +356,8 @@ def publish(payload: dict, project_root: Path, worktree: Path) -> dict:
             if stats.audit_status != "通过" or stats.collection_mode != "full_topsales":
                 raise ValueError("独立工作簿审计未通过全量 Top Sales 契约")
             candidate_hash = _sha256(candidate)
-            if _gates(root, daily, started, candidate) != (target, template_hash, head):
-                raise ValueError("发布前 Git HEAD 或只读 Excel 规范发生变化")
+            if _gates(root, daily, started, candidate) != (target, template_hash):
+                raise ValueError("发布前只读 Excel 规范发生变化")
             os.replace(candidate, target)
             # write_excel 已 fsync 候选内容；这里只同步最终目录项。
             try:

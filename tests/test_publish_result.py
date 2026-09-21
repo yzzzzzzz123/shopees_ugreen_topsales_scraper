@@ -266,20 +266,17 @@ class PublishTests(unittest.TestCase):
                 self.publish()
         self.unchanged()
 
-    def test_dirty_main_or_daily_rejected(self):
+    def test_dirty_main_and_daily_do_not_block_publication(self):
         for root in (self.root, self.daily):
             extra = root / "offline-untracked.txt"
             extra.write_text("fixture", encoding="utf-8")
-            with self.assertRaisesRegex(ValueError, "未提交改动"):
-                self.publish()
-            extra.unlink()
-            self.unchanged()
+            self.assertEqual(self.publish()["audit_status"], "通过")
+            self.assertEqual(extra.read_text(encoding="utf-8"), "fixture")
+            self.assertIn("offline-untracked.txt", self.git(root, "status", "--porcelain"))
 
-    def test_head_mismatch_rejected(self):
+    def test_head_mismatch_does_not_block_publication(self):
         self.git(self.daily, "-c", "user.name=Offline Fixture", "-c", "user.email=offline@example.invalid", "commit", "--allow-empty", "-m", "different offline HEAD")
-        with self.assertRaisesRegex(ValueError, "同一已提交 HEAD"):
-            self.publish()
-        self.unchanged()
+        self.assertEqual(self.publish()["audit_status"], "通过")
 
     def test_wrong_branch_rejected(self):
         self.git(self.daily, "branch", "-m", "daily/wrong-offline-branch")
@@ -339,7 +336,7 @@ class PublishTests(unittest.TestCase):
                 self.publish()
         self.unchanged()
 
-    def test_mutation_before_final_replace_is_rechecked(self):
+    def test_source_changes_during_publication_do_not_block_replacement(self):
         real_validate = excel.validate_excel
 
         def validate_and_change(path):
@@ -348,9 +345,24 @@ class PublishTests(unittest.TestCase):
             return stats
 
         with patch.object(excel, "validate_excel", side_effect=validate_and_change):
-            with self.assertRaisesRegex(ValueError, "未提交改动"):
+            self.assertEqual(self.publish()["audit_status"], "通过")
+        self.assertTrue((self.root / "new-untracked.txt").is_file())
+
+    def test_template_changes_during_publication_still_preserve_old_result(self):
+        real_validate = excel.validate_excel
+
+        def validate_and_change(path):
+            stats = real_validate(path)
+            workbook = load_workbook(self.root_spec)
+            workbook["商品汇总"]["B2"] = "changed template"
+            workbook.save(self.root_spec)
+            workbook.close()
+            return stats
+
+        with patch.object(excel, "validate_excel", side_effect=validate_and_change):
+            with self.assertRaisesRegex(ValueError, "SHA-256"):
                 self.publish()
-        self.unchanged()
+        self.assertEqual(self.output.read_bytes(), self.previous)
 
     def test_cli_prints_receipt_only_on_success(self):
         out, err = io.StringIO(), io.StringIO()

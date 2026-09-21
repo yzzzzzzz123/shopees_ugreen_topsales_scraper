@@ -90,6 +90,17 @@ def _clean(root: Path) -> bool:
     ).stdout.strip()
 
 
+def _auto_commit(root: Path, message: str) -> str | None:
+    """保存本项目非 ignored 的现有改动；无改动时不生成空提交。"""
+    if _clean(root):
+        return None
+    if _git(root, "ls-files", "--unmerged").stdout:
+        raise WorktreeError(f"存在尚未解决的实际合并冲突，保留改动：{root}")
+    _git(root, "add", "-A", "--", ".")
+    _git(root, "commit", "-m", message)
+    return _git(root, "rev-parse", "HEAD").stdout.strip()
+
+
 def _run_date(value: str | None) -> date:
     if value is None:
         return datetime.now(ZoneInfo("Asia/Shanghai")).date()
@@ -103,11 +114,6 @@ def _run_date(value: str | None) -> date:
 
 
 def _prepare_locked(root: Path, value: str | None) -> dict[str, object]:
-    if not _clean(root):
-        raise WorktreeError(
-            "主项目存在已跟踪或未跟踪改动；请先人工审阅并提交或处理这些改动，"
-            "再创建每日 worktree，以确保运行的是已审阅 Skill"
-        )
     python = root / ".venv/bin/python"
     source_runner = root / "skills/shopee-ugreen-topsales/scripts/run_scrape.py"
     if not python.is_file():
@@ -126,7 +132,6 @@ def _prepare_locked(root: Path, value: str | None) -> dict[str, object]:
         raise WorktreeError(f"当日 worktree 路径不能是符号链接：{worktree}")
     expected_branch = f"refs/heads/{branch}"
     registrations = _parse_worktrees(root)
-    primary_head = _git(root, "rev-parse", "HEAD").stdout.strip()
 
     registered_here = next(
         (
@@ -147,14 +152,6 @@ def _prepare_locked(root: Path, value: str | None) -> dict[str, object]:
                 f"当日路径注册到 {registered_here.get('branch')!r}，"
                 f"但预期为 {expected_branch!r}"
             )
-        if not _clean(worktree):
-            raise WorktreeError(f"当日 worktree 存在改动：{worktree}")
-        daily_head = _git(worktree, "rev-parse", "HEAD").stdout.strip()
-        if daily_head != primary_head:
-            raise WorktreeError(
-                "当日 worktree 与当前项目 HEAD 不一致；请人工处理，程序不会静默改写"
-            )
-        created = False
     else:
         if worktree.exists():
             raise WorktreeError(
@@ -164,26 +161,28 @@ def _prepare_locked(root: Path, value: str | None) -> dict[str, object]:
             raise WorktreeError(
                 f"当日分支已在其他位置检出：{branch_elsewhere.get('worktree')}"
             )
+
+    source_commit = _auto_commit(root, f"chore: save UGREEN source before {compact} run")
+    primary_head = _git(root, "rev-parse", "HEAD").stdout.strip()
+    created = registered_here is None
+    if created:
         worktree_root.mkdir(parents=True, exist_ok=True)
         branch_exists = (
             _git(root, "show-ref", "--verify", "--quiet", expected_branch, check=False).returncode
             == 0
         )
         if branch_exists:
-            branch_head = _git(root, "rev-parse", expected_branch).stdout.strip()
-            if branch_head != primary_head:
-                raise WorktreeError(
-                    "已存在的当日分支不是当前项目 HEAD；请人工处理，程序不会静默改写"
-                )
             _git(root, "worktree", "add", str(worktree), branch)
         else:
             _git(root, "worktree", "add", "-b", branch, str(worktree), "HEAD")
-        if not _clean(worktree):
-            raise WorktreeError(f"新建的当日 worktree 意外存在改动：{worktree}")
+
+    daily_commit = _auto_commit(worktree, f"chore: save UGREEN daily changes for {compact}")
+    daily_head = _git(worktree, "rev-parse", "HEAD").stdout.strip()
+    synchronized = daily_head != primary_head
+    if synchronized:
+        # 正常快进或保留双方提交的合并；不 reset、不丢弃日期工作区改动。
+        _git(worktree, "merge", "--no-edit", primary_head)
         daily_head = _git(worktree, "rev-parse", "HEAD").stdout.strip()
-        if daily_head != primary_head:
-            raise WorktreeError("新建的当日 worktree 与项目 HEAD 不一致")
-        created = True
 
     runner = worktree / "skills/shopee-ugreen-topsales/scripts/run_scrape.py"
     if not runner.is_file():
@@ -196,6 +195,9 @@ def _prepare_locked(root: Path, value: str | None) -> dict[str, object]:
         "worktree": str(worktree),
         "branch": branch,
         "created": created,
+        "source_commit": source_commit,
+        "daily_commit": daily_commit,
+        "synchronized": synchronized,
         "source_head": primary_head,
         "worktree_head": daily_head,
         "python": str(python),

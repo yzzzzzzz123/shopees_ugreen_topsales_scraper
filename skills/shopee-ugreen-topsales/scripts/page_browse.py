@@ -15,7 +15,7 @@ from list_html import _identity
 
 
 class BrowseInterrupted(RuntimeError):
-    """The bound page changed, lost focus, or is no longer an eligible page."""
+    """The bound page closed, changed, or is no longer an eligible page."""
 
 
 class DetachFailed(RuntimeError):
@@ -27,6 +27,7 @@ class BrowserHandoff:
 
     The host supplies pw.stop for its existing CDP attachment, never browser.close,
     and wraps navigation, browsing, parsing and the enclosing capture loop in run.
+    Successful operations retain the same long-lived attachment and controller.
     A new handoff/controller may be bound only after the user explicitly resumes.
     """
 
@@ -82,11 +83,6 @@ def _guard_page(page, expected_url: str) -> None:
     )
     if not valid or current != expected_url:
         raise BrowseInterrupted("滚动前页面已改变或出现验证/登录，保留当前页：" + parts.path)
-    state = page.evaluate(
-        "() => ({visibility: document.visibilityState, focused: document.hasFocus()})"
-    )
-    if state.get("visibility") != "visible" or state.get("focused") is not True:
-        raise BrowseInterrupted("目标商品/店铺页不在前台，暂停滚轮浏览；不自动抢回焦点")
 
 
 def read_page_after_browsing(
@@ -102,8 +98,8 @@ def read_page_after_browsing(
     content viewport. check_html must reject challenges/incomplete documents.
     The first DOM is a pre-scroll safety check; only the final DOM is handed to
     business parsers. Wheel deltas describe dispatched input, not measured motion.
-    Focus checks stop detected background operation; they are not an atomic lock
-    on focus or a timeout for an already dispatched Playwright wheel command.
+    Background visibility or missing focus does not interrupt collection. Actual
+    read/input failures still propagate; the host must bound stalled input calls.
     The host must call this within BrowserHandoff.run so failures release control.
     """
     if (len(wheel_origin) != 2 or any(

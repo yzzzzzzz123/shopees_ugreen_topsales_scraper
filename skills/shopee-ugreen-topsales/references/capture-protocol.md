@@ -8,10 +8,15 @@
 且原页正常时，可按 [cua-fallback.md](cua-fallback.md) 用电脑操作接管同一原 Chrome，
 读取详情 DOM/商品内嵌 JSON；用户明确只用 A 时不自动切换。两条路线都不做环境注入，提交本协议的相同载荷；
 控制台回传使用的读取标记、分块包装、诊断字段不得进入最终 pages/cards/details。
+普通 Playwright 只允许持续长连接：初始化、检查、采集、进度保存及冷却复用同一附着
+连接和原 `page`，不短连检查即断开，不频繁重连或重复触发远程调试授权；连接生命周期
+与真实异常交接、人工续跑遵循主 Skill 第 4 节。
 普通 Playwright 路线按真实 URL 导航，经主 Skill 第 4 节的正常页检查、分段滚轮浏览后，
 用最终一次 `page.content()` 的内存 DOM 离线解析。滚动前另读的 DOM 仅用于安全检查；
 滚轮步长等操作诊断不进入本协议。不通过 locator/click/evaluate 逐项操控页面。
-只读可见性/焦点检查用于滚轮前台保护，检测到失焦即暂停；不自动抢回焦点。
+只读可见性/焦点状态仅作诊断；后台或 `hasFocus=false` 本身不暂停、不报错、不断开，
+也不自动抢回焦点。原页可正常读取且身份与完整性检查通过就继续；实际读页/输入超时、
+原页关闭、非预期身份变更、登录/验证码/挑战或页面不可用仍按原停止及人工续跑规则处理。
 
 `--publish-stdin` 只接受完整 PH UGREEN 全量载荷，不提供历史清单回填分支。
 `--checkpoint-stdin` 用相同字段保存本轮进度：pages 可为真实连续前缀（保留现场 total_pages/
@@ -120,7 +125,8 @@ cwd = DAILY
 宿主工具若无法安全传递本轮完整载荷，报告这个交接能力缺口，不改成不受控持久化。
 
 发布模块重算去重、排名、来源页、计数和 17 项核验；不接受 `audit`、外来排名、成功计数
-或历史表路径。目标目录/分支、clean 同 HEAD、规范哈希检查均通过后，候选表独立校验，
+或历史表路径。目标目录/分支和规范哈希检查通过后，候选表独立校验；Git 脏状态或
+HEAD 不同不作为阻断条件。
 最终原子发布。stdout 回执含 `path/sha256/template_sha256/schema_version/collection_mode/`
 `list_page_count/product_count/sku_count/main_image_count/secondary_image_count/audit_status`。
 

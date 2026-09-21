@@ -131,11 +131,11 @@ class RunnerTests(unittest.TestCase):
                 self.assertEqual((code, output), (1, ""))
                 prepare.assert_not_called()
 
-    def test_prepare_dirty_state_failure_is_not_cleaned_or_retried(self):
-        prepare = Mock(side_effect=ValueError("主项目存在未提交改动"))
+    def test_prepare_git_failure_is_reported_without_destructive_retry(self):
+        prepare = Mock(side_effect=ValueError("git merge 执行失败：合并冲突"))
         code, output, errors = self.invoke("--prepare", modules={"prepare_daily_worktree": SimpleNamespace(prepare=prepare)})
         self.assertEqual((code, output), (1, ""))
-        self.assertIn("未提交改动", errors)
+        self.assertIn("合并冲突", errors)
         prepare.assert_called_once()
 
     def test_publish_forwards_only_stdin_object_and_exact_output_identity(self):

@@ -33,7 +33,7 @@ def _parser() -> argparse.ArgumentParser:
     )
     modes = parser.add_mutually_exclusive_group()
     modes.add_argument("--plan", action="store_true", help="只读输出全量任务交接计划（默认）")
-    modes.add_argument("--prepare", action="store_true", help="创建或安全复用上海本日 worktree")
+    modes.add_argument("--prepare", action="store_true", help="自动提交改动并创建或更新上海本日 worktree")
     modes.add_argument("--publish-stdin", action="store_true", help="验收 stdin 现场 JSON 并原子发布四表")
     modes.add_argument("--checkpoint-stdin", action="store_true", help="保存本轮已采集数据为累计进度 Excel，不表示全量完成")
     modes.add_argument("--validate", action="store_true", help="独立只读验收明确指定的日期结果")
@@ -99,8 +99,9 @@ def _plan(root: Path, run_date: date) -> dict:
         "challenge_action": "detach_then_checkpoint_wait_for_user",
         "required_steps": [
             "读取 Skill 内任务书、内容规范及现场数据协议，冻结上海启动日；规范只读且不是业务种子。",
-            "检查主项目与日期 worktree clean、同一已提交 HEAD；按 --prepare 创建或安全复用本日目录。",
-            "宿主 Agent 使用已有工具读取原 Chrome 目标页，确认 PH UGREEN 与 Top Sales。",
+            "按 --prepare 自动提交项目改动并创建或更新本日 worktree；不以脏状态或 HEAD 不同阻断采集和发布。",
+            "宿主 Agent 读取原 Chrome 目标页，确认 PH UGREEN 与 Top Sales；Playwright 每轮只建立一次长连接，检查、采集、保存和冷却复用同一连接与原 page，不频繁重连或重复触发授权。",
+            "页面后台或失焦不暂停、不因此断开；页面可正常读取且身份、完整性通过就继续，不抢回焦点。实际读页或输入失败、超时仍按异常处理。",
             "A 路线每页按 Skill 第 4 节调用 page_browse.py：正常页检查、分段滚轮与随机停留，最终 DOM 离线解析；滚动不保证免验证码。",
             "单路以每次随机 2～3 秒导航间隔读取本轮全部列表页；列表页和卡片不计入详情批次。",
             "逐个访问本轮每个唯一商品详情，核对身份、完整 model/SKU 和图库；缺字段不编造。",

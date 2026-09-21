@@ -1,4 +1,4 @@
-"""离线验证每日 worktree 的输出路径；所有文件和 Git 响应均为临时夹具。"""
+"""在临时 Git 仓库验证日期准备、自动提交和已有改动保留，不访问浏览器。"""
 
 from __future__ import annotations
 
@@ -51,6 +51,89 @@ class PrepareDailyTests(unittest.TestCase):
             self.assertFalse((daily / "result").exists())
             self.assertEqual(legacy.read_bytes(), b"legacy main workbook")
             self.assertEqual(previous.read_bytes(), b"previous daily workbook")
+
+
+class AutoCommitPrepareTests(unittest.TestCase):
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory(prefix="ugreen-prepare-git-")
+        self.addCleanup(directory.cleanup)
+        self.root = Path(directory.name).resolve()
+        self.daily = self.root / "worktrees/20260921_ugreen_topsales"
+        self.script = Path("skills/shopee-ugreen-topsales/scripts/run_scrape.py")
+        for path in (self.root / ".venv/bin/python", self.root / self.script):
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("initial\n", encoding="utf-8")
+        (self.root / ".gitignore").write_text("/worktrees/\n/result/\n/.venv/\n", encoding="utf-8")
+        self.git(self.root, "init", "-b", "main")
+        self.git(self.root, "config", "user.name", "Temporary Fixture")
+        self.git(self.root, "config", "user.email", "fixture@example.invalid")
+        self.git(self.root, "add", ".")
+        self.git(self.root, "commit", "-m", "initial")
+
+    def git(self, root, *args):
+        return prepare._git(root, *args).stdout.strip()
+
+    def run_prepare(self):
+        return prepare._prepare_locked(self.root, "2026-09-21")
+
+    def test_dirty_main_is_committed_and_existing_daily_is_fast_forwarded(self):
+        self.assertTrue(self.run_prepare()["created"])
+        (self.root / self.script).write_text("updated\n", encoding="utf-8")
+        (self.root / "new-source.txt").write_text("new\n", encoding="utf-8")
+        receipt = self.run_prepare()
+        self.assertTrue(receipt["source_commit"])
+        self.assertTrue(receipt["synchronized"])
+        self.assertEqual(receipt["source_head"], receipt["worktree_head"])
+        self.assertEqual((self.daily / self.script).read_text(), "updated\n")
+        self.assertEqual((self.daily / "new-source.txt").read_text(), "new\n")
+        head = receipt["worktree_head"]
+        reused = self.run_prepare()
+        self.assertIsNone(reused["source_commit"])
+        self.assertIsNone(reused["daily_commit"])
+        self.assertFalse(reused["synchronized"])
+        self.assertEqual(reused["worktree_head"], head)
+
+    def test_daily_changes_and_ignored_result_survive_divergent_merge(self):
+        self.run_prepare()
+        (self.root / self.script).write_text("updated\n", encoding="utf-8")
+        note = self.daily / "daily-note.txt"
+        note.write_text("preserve me\n", encoding="utf-8")
+        output = self.daily / "result/ugreen_topsales_progress.xlsx"
+        output.parent.mkdir()
+        output.write_bytes(b"existing result")
+        receipt = self.run_prepare()
+        self.assertTrue(receipt["source_commit"])
+        self.assertTrue(receipt["daily_commit"])
+        self.assertNotEqual(receipt["source_head"], receipt["worktree_head"])
+        self.assertEqual((self.daily / self.script).read_text(), "updated\n")
+        self.assertEqual(note.read_text(), "preserve me\n")
+        self.assertEqual(output.read_bytes(), b"existing result")
+        self.assertEqual(self.git(self.daily, "ls-files", "result"), "")
+        self.assertEqual(self.git(self.root, "status", "--porcelain"), "")
+        self.assertEqual(self.git(self.daily, "status", "--porcelain"), "")
+
+    def test_existing_unchecked_out_old_daily_branch_is_updated(self):
+        self.git(self.root, "branch", "daily/20260921-ugreen-topsales")
+        (self.root / self.script).write_text("updated\n", encoding="utf-8")
+        receipt = self.run_prepare()
+        self.assertTrue(receipt["created"])
+        self.assertTrue(receipt["synchronized"])
+        self.assertEqual((self.daily / self.script).read_text(), "updated\n")
+
+    def test_actual_merge_conflict_is_preserved_and_not_committed_on_retry(self):
+        self.run_prepare()
+        (self.root / self.script).write_text("main change\n", encoding="utf-8")
+        (self.daily / self.script).write_text("daily change\n", encoding="utf-8")
+        with self.assertRaisesRegex(prepare.WorktreeError, "merge"):
+            self.run_prepare()
+        head = self.git(self.daily, "rev-parse", "HEAD")
+        content = (self.daily / self.script).read_text()
+        self.assertIn("main change", content)
+        self.assertIn("daily change", content)
+        with self.assertRaisesRegex(prepare.WorktreeError, "合并冲突"):
+            self.run_prepare()
+        self.assertEqual(self.git(self.daily, "rev-parse", "HEAD"), head)
+        self.assertEqual((self.daily / self.script).read_text(), content)
 
 
 if __name__ == "__main__":

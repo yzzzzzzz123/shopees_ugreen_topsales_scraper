@@ -41,7 +41,8 @@ class BrowserHandoffTests(unittest.TestCase):
     def test_success_keeps_connection_and_returns_result(self):
         detach = Mock()
         gate = BrowserHandoff(detach)
-        self.assertEqual(gate.run(lambda x, *, y: x + y, 2, y=3), 5)
+        for x in range(3):
+            self.assertEqual(gate.run(lambda x, *, y: x + y, x, y=3), x + 3)
         self.assertFalse(gate.waiting_for_user)
         detach.assert_not_called()
 
@@ -177,7 +178,7 @@ class PageBrowseTests(unittest.TestCase):
         page.mouse.move.assert_not_called()
         page.mouse.wheel.assert_not_called()
 
-    def test_hidden_or_unfocused_page_receives_no_input(self):
+    def test_hidden_or_unfocused_readable_page_continues(self):
         for state in (
             {'visibility': 'hidden', 'focused': True},
             {'visibility': 'visible', 'focused': False},
@@ -186,31 +187,42 @@ class PageBrowseTests(unittest.TestCase):
             with self.subTest(state=state):
                 page = self.make_page()
                 page.evaluate.return_value = state
-                with self.assertRaisesRegex(BrowseInterrupted, '不在前台'):
-                    self.browse(page)
-                page.content.assert_not_called()
-                page.mouse.move.assert_not_called()
-                page.mouse.wheel.assert_not_called()
+                result = self.browse(page)
+                self.assertEqual(result.html, 'after')
+                self.assertEqual(page.content.call_count, 2)
+                page.mouse.move.assert_called_once_with(600, 300)
+                self.assertGreaterEqual(page.mouse.wheel.call_count, 3)
+                page.evaluate.assert_not_called()
 
-    def test_focus_loss_during_initial_pause_stops_before_input(self):
-        page = self.make_page()
-        page.evaluate.side_effect = [
-            {'visibility': 'visible', 'focused': True},
-            {'visibility': 'hidden', 'focused': False},
-        ]
-        with self.assertRaisesRegex(BrowseInterrupted, '不在前台'):
-            self.browse(page)
-        page.content.assert_not_called()
-        page.mouse.move.assert_not_called()
-        page.mouse.wheel.assert_not_called()
+    def test_focus_loss_during_browsing_keeps_same_connection(self):
+        for after_first_wheel in (False, True):
+            with self.subTest(after_first_wheel=after_first_wheel):
+                page = self.make_page()
+                detach = Mock()
+                gate = BrowserHandoff(detach)
 
-    def test_focus_loss_after_first_wheel_stops_without_more_input(self):
+                def lose_focus(_):
+                    if not after_first_wheel or page.mouse.wheel.called:
+                        page.evaluate.return_value = {'visibility': 'hidden', 'focused': False}
+
+                page.wait_for_timeout.side_effect = lose_focus
+                result = gate.run(self.browse, page)
+                self.assertEqual(result.html, 'after')
+                self.assertFalse(page.evaluate.return_value['focused'])
+                self.assertGreaterEqual(page.mouse.wheel.call_count, 3)
+                self.assertFalse(gate.waiting_for_user)
+                detach.assert_not_called()
+
+    def test_background_page_actual_input_failure_still_detaches(self):
         page = self.make_page()
-        page.evaluate.side_effect = lambda _: {
-            'visibility': 'visible', 'focused': not page.mouse.wheel.called,
-        }
-        with self.assertRaisesRegex(BrowseInterrupted, '不在前台'):
-            self.browse(page)
+        page.evaluate.return_value = {'visibility': 'hidden', 'focused': False}
+        page.mouse.wheel.side_effect = TimeoutError('input timed out')
+        detach = Mock()
+        gate = BrowserHandoff(detach)
+        with self.assertRaisesRegex(TimeoutError, 'input timed out'):
+            gate.run(self.browse, page)
+        detach.assert_called_once_with()
+        self.assertTrue(gate.waiting_for_user)
         self.assertEqual(page.mouse.wheel.call_count, 1)
         self.assertEqual(page.content.call_count, 1)
 

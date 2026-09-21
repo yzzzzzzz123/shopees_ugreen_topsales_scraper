@@ -69,15 +69,17 @@ description: 接管人工已打开的原 Chrome，采集 PH UGREEN 全店 Top Sa
 无参数等同 --plan；awaiting_browser_collection 不是已经采集。--check-contract 检查
 所列规范路径和模板 schema/哈希，不证明浏览器连通，也不替代完整阅读必需文档。
 
-全量经 --prepare 创建/安全复用上海本日 worktree；抽测跳过。绑定回执的
+全量经 --prepare 自动提交现有改动并创建/更新上海本日 worktree；抽测跳过。绑定回执的
 project_root/worktree/branch/python/runner/output/source_head/worktree_head。
-主根与日期源码必须 clean、同 HEAD、分支正确；Python 来自主根，发布 runner 来自
+不以脏状态或 HEAD 不同阻断采集和发布；日期分支保持正确，Python 来自主根，发布 runner 来自
 目标日期目录。prepare 后沿用启动日，跨午夜不重建另一轮身份。
 
 正式结果：`worktrees/YYYYMMDD_ugreen_topsales/result/ugreen_topsales.xlsx`。
 采集中累计进度表：同目录 `ugreen_topsales_progress.xlsx`，与全量正式结果区分。
-日期快照包含同提交的完整 Skill/源码；模板、规范只读。维护改动需另行授权提交，
-不能自动 commit/stash/reset、热补日期源码、同步/重建 worktree 或删除冲突文件。
+日期工作区包含完整 Skill/源码；任务准备自动提交主项目和本日工作区的现有改动，
+再快进或正常合并主项目版本，不重复请求授权。模板、规范在采集中只读；保留已有
+改动和结果，不 stash/reset/clean、不删除冲突文件或改其他日期。实际 Git 失败或合并
+冲突才报告处理，具体流程见 worktree.md。
 
 ## 4. S2-A：普通 Playwright 接管原 Chrome
 
@@ -85,6 +87,10 @@ project_root/worktree/branch/python/runner/output/source_head/worktree_head。
    店铺身份、Top Sales 和当前页。不能盲用 contexts[0].pages[0] 或操作无关账号标签。
 2. 使用已有原会话连接能力，不调用 launch、launch_persistent_context、new_context
    或新建采集页。连接不可用时报告具体缺口；需用户开启调试/授权时交用户，不自行改设置。
+   只允许持续长连接：同一轮初始化、能力检查、列表与详情采集、进度保存及批次冷却
+   复用同一附着连接和已绑定的原 `page`。检查成功后直接沿用，不做“短连检查即断开”，
+   不按工具调用、页面或批次重建 Playwright，不因保存、冷却或失焦重连。远程调试已经
+   允许后不重复点击或触发授权；仅任务结束、用户要求停止或第 6 项真实异常交接时断开。
 3. 本机 Python Playwright 1.63.0 已验证可用
    `chromium.connect_over_cdp("chrome", no_defaults=True)` 附着用户已开启远程调试的 Chrome。
    no_defaults 避免默认上下文覆盖；不额外设置浏览器环境或 init script。
@@ -100,10 +106,11 @@ project_root/worktree/branch/python/runner/output/source_head/worktree_head。
    取得最终 DOM 并重新检查。滚轮事件返回不代表滚动已经结束，保留事件后的等待。
    滚动前的 DOM 只用于安全检查，业务解析只接收滚动后的 DOM；每步检查原页身份，
    关闭、跳转或挑战即停止，不尝试用滚轮处理验证。输入步长不宣称为实测滚动距离。
-   仅额外用 `evaluate` 只读 `document.visibilityState/document.hasFocus()`；目标页
-   必须保持前台且内容区有焦点，检测到失焦就暂停，不自动切换标签或抢回焦点。
-   前台检查不能消除检查后失焦的竞态，也不是已发出的 `mouse.wheel` 的超时保证；
-   宿主发现输入长时间不返回时中断本次调用，保留原页与已取得的数据，不反复重试。
+   仅额外用 `evaluate` 只读 `document.visibilityState/document.hasFocus()` 作为诊断；
+   页面在后台或 `hasFocus=false` 本身不是暂停、报错或断开条件，也不自动切换标签或
+   抢回焦点。只要原页仍可正常读取、身份与完整性检查通过，就保持当前连接继续采集。
+   焦点状态不保证已发出的 `mouse.wheel` 会及时返回；实际读页或输入超时、原页关闭、
+   非预期身份变更、挑战或不完整数据仍按第 6 项停止交接，不反复重试。
    这替换固定驻留，不保证避免验证码，也不改变导航间隔、批次冷却或字段口径。
    不以 locator/click/evaluate 打开图库、选择规格或逐项读取，不执行 JS 滚动或环境注入；
    不读取 Cookie/密码/Storage、整份账号状态或隐藏网络接口。
@@ -115,7 +122,8 @@ project_root/worktree/branch/python/runner/output/source_head/worktree_head。
    `control = BrowserHandoff(pw.stop, on_handoff=lambda: saver.maybe_save(force=True))`，
    用 `control.run(采集函数, …)`
    包住导航、滚动、DOM 检查、离线验收及外层采集循环。URL/DOM 检查一旦报挑战或
-   其他采集异常，先执行断开回调，再向宿主抛出异常；不等批次结束、截图、日志或冷却。
+   其他真实采集异常，先执行断开回调，再向宿主抛出异常；单独失焦或后台状态不得
+   抛出采集异常或触发交接。不等批次结束、截图、日志或冷却。
    回调只用当前附着的 `pw.stop()`，不用 `browser/context/page.close()`，保留原页和内存数据。
    控制器随即锁定等待用户，禁止后续采集；先执行断开，再离线保存已取得数据。
    断开失败须报“连接状态未确认”，不能宣称已脱离；仍尝试保存数据，不因断连异常丢弃尾批。
@@ -214,7 +222,7 @@ models_complete/gallery_complete 只有完整现场证据才设 true；声明和
   开始新增采集前确认写表所需的 Node 和运行时 `@oai/artifact-tool` 可用；渲染器读取
   `UGREEN_ARTIFACT_NODE_MODULES`，未设置时使用 Codex 运行时依赖缓存，不改依赖目录。
 - 进度写入保留日期注册、启动日、路径与字段检查；允许主根有维护改动时先保存已有数据，
-  不要求为了保全数据先提交 Git，不热补日期源码。全量正式发布的 clean/同 HEAD 门禁不变。
+  不要求为了保全数据先提交 Git，不热补日期源码。正式发布也不检查 clean/同 HEAD。
 - 先断开浏览器再保存尾批；保存失败保留上一份有效进度表、内存和暂停状态，报告失败，
   不继续采集。未知文件、其他轮次或会丢失已保存身份/详情的覆盖必须拒绝。
 
@@ -241,7 +249,7 @@ stdin = 本轮完整 UTF-8 JSON
 ```
 
 不拼接 shell、不保存载荷、不直接调用 write_excel 绕过门禁。发布层严格转换、
-重算排名/审计，检查 Git/日期/路径/模板，锁内构建受控候选，回读和独立校验后原子
+重算排名/审计，检查日期/路径/模板，锁内构建受控候选，回读和独立校验后原子
 替换正式文件。替换前失败保留旧结果，不能交旧表冒充本次成功。
 
 四表固定为商品汇总、SKU明细、图片明细、抓取核验；表头第 6 行、数据第 7 行起，
@@ -255,7 +263,7 @@ argv = [PYTHON, DAILY_RUNNER, "--validate", "--project-root", ROOT, "--worktree"
 cwd = DAILY
 ```
 
-核对 collection_mode=full_topsales、audit_status=通过、计数一致、日期源码 clean、
+核对 collection_mode=full_topsales、audit_status=通过、计数一致、
 result 只含正式表及可选的规定进度表。Excel 验收只证明内部一致，必须结合本轮全部现场覆盖才算全量完成。
 
 ## 9. 实现边界、证据与交付
@@ -279,7 +287,7 @@ result 只含正式表及可选的规定进度表。Excel 验收只证明内部�
 此前 B 取得过 27 页/810 个唯一商品链接、两件的 6/12 SKU 和各 9 张图库原图。
 均不是今日全店全部详情/最终 Excel 完成的证明，也不是以后运行的固定数量。
 
-字段/身份/Git/模板门禁失败报告具体缺口，不补造全量结果；已验收数据按第 8 节保存进度。
+字段/身份/模板验收失败报告具体缺口，不补造全量结果；已验收数据按第 8 节保存进度。
 内存丢失后重新现场取数，不从旧表恢复，不承诺不存在的持久化 resume 服务。
 不落盘 HTML/JSON/截图/trace/响应/会话；允许累计进度 Excel 和写表模块受控候选。
 
