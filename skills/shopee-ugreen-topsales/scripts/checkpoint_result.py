@@ -13,6 +13,7 @@ import zipfile
 from xml.etree import ElementTree as ET
 from datetime import datetime
 from zoneinfo import ZoneInfo
+from urllib.parse import quote
 from openpyxl import load_workbook
 import excel
 from publish_result import _check_destination, _identity, _image_url, _list_url, _monthly, _object, _text, _timestamp, _safe_path, _exclusive_publish
@@ -280,7 +281,15 @@ def _check_existing(target, snapshot):
                     if old != new:
                         raise ValueError("拒绝改写已保存的完整详情汇总")
                 elif old[14] == "未采集详情（标题来自列表）":
-                    if any(old[index] != new[index] for index in immutable_list_columns):
+                    def same_fact(index):
+                        if index == 13:
+                            # Chrome serializes Unicode URLs as percent-encoded
+                            # URLs. Preserve the actual detail URL while allowing
+                            # only this equivalent spelling, not query/ID changes.
+                            safe = ":/?&=%@!$'()*+,;~-._"
+                            return quote(old[index], safe=safe) == quote(new[index], safe=safe)
+                        return old[index] == new[index]
+                    if any(not same_fact(index) for index in immutable_list_columns):
                         raise ValueError("拒绝改写已保存的列表事实")
                 else:
                     raise ValueError("已有进度表的详情状态无效")

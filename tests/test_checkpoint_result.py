@@ -7,6 +7,7 @@ import sys
 import tempfile
 import unittest
 from unittest.mock import Mock, patch
+from urllib.parse import quote
 
 from openpyxl import Workbook
 
@@ -81,6 +82,34 @@ class SnapshotTests(unittest.TestCase):
 
 
 class SaverTests(unittest.TestCase):
+    def test_browser_percent_encoding_does_not_rewrite_list_facts(self):
+        p = payload()
+        listed = 'https://shopee.ph/【新款】商品-i.64922227.123?extraParams=%7B%22id%22%3A1%7D'
+        p['pages'][0]['cards'][0]['product_url'] = listed
+        previous = build_snapshot(p)
+        actual = quote(listed, safe=":/?&=%@!$'()*+,;~-._")
+        p['details'] = [dict(detail(), product_url=actual)]
+        current = build_snapshot(p)
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory).resolve() / 'ugreen_topsales_progress.xlsx'
+            wb = Workbook()
+            wb.remove(wb.active)
+            for name, rows in zip(('商品汇总', 'SKU明细', '图片明细', '抓取核验'), previous['sheets']):
+                ws = wb.create_sheet(name)
+                if name == '抓取核验':
+                    ws['A2'] = 'UGREEN Top Sales 抓取核验（采集进度）'
+                ws['A4'] = '启动时间：' + previous['started_at']
+                for r, row in enumerate(rows, 7):
+                    for c, value in enumerate(row, 1): ws.cell(r, c, value)
+            wb.save(target)
+            checkpoint_result._check_existing(target, current)
+            self.assertEqual(current['sheets'][0][0][13], actual)
+            for column, changed in ((13, actual + '&changed=1'), (6, 999), (4, '124')):
+                invalid = deepcopy(current)
+                invalid['sheets'][0][0][column] = changed
+                with self.assertRaises(ValueError):
+                    checkpoint_result._check_existing(target, invalid)
+
     def test_real_renderer_writes_only_the_requested_xlsx(self):
         snapshot = build_snapshot(payload())
         renderer = Path(__file__).resolve().parents[1] / 'skills/shopee-ugreen-topsales/scripts/checkpoint_excel.mjs'
