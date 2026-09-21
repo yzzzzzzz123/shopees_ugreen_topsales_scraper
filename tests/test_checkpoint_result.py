@@ -1,5 +1,6 @@
 from copy import deepcopy
 from contextlib import nullcontext
+import json
 from pathlib import Path
 import subprocess
 import sys
@@ -80,6 +81,22 @@ class SnapshotTests(unittest.TestCase):
 
 
 class SaverTests(unittest.TestCase):
+    def test_real_renderer_writes_only_the_requested_xlsx(self):
+        snapshot = build_snapshot(payload())
+        renderer = Path(__file__).resolve().parents[1] / 'skills/shopee-ugreen-topsales/scripts/checkpoint_excel.mjs'
+        with tempfile.TemporaryDirectory(dir=Path(__file__).resolve().parents[1]) as directory:
+            output = Path(directory) / 'progress.xlsx'
+            proc = subprocess.run(
+                ['node', str(renderer), str(output)],
+                input=json.dumps(snapshot, ensure_ascii=False, allow_nan=False),
+                text=True,
+                capture_output=True,
+                timeout=120,
+            )
+            self.assertEqual(proc.returncode, 0, proc.stderr[-1000:])
+            self.assertTrue(output.is_file())
+            self.assertEqual(sorted(path.name for path in output.parent.iterdir()), [output.name])
+
     def test_checkpoint_rejects_unknown_result_files_before_rendering(self):
         with tempfile.TemporaryDirectory(dir=Path(__file__).resolve().parents[1]) as directory:
             root = Path(directory) / 'project'

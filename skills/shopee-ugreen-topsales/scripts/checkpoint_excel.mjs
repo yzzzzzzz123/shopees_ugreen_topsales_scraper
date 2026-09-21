@@ -54,5 +54,5 @@ for (let k=0;k<names.length;k++) {
 }
 wb.recalculate();
 const out=await SpreadsheetFile.exportXlsx(wb);
-await out.save(process.argv[2]);
+await fs.writeFile(process.argv[2], out.data);
 console.log(JSON.stringify({saved:true, ...data.counts}));
