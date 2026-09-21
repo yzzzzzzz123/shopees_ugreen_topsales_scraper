@@ -9,7 +9,7 @@ import unittest
 from unittest.mock import Mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'skills/shopee-ugreen-topsales/scripts'))
-from page_browse import BrowserHandoff, BrowseInterrupted, DetachFailed, read_page_after_browsing
+from page_browse import BrowserHandoff, BrowseInterrupted, CaptchaDetected, DetachFailed, read_page_after_browsing
 
 STORE = 'https://shopee.ph/ugreen.ph?page=0&sortBy=sales&tab=0'
 
@@ -18,8 +18,8 @@ class BrowserHandoffTests(unittest.TestCase):
     def test_detach_precedes_checkpoint_and_error_reporting(self):
         events = []
         gate = BrowserHandoff(lambda: events.append('detach'), on_handoff=lambda: events.append('save'))
-        with self.assertRaises(ValueError):
-            gate.run(Mock(side_effect=ValueError('challenge')))
+        with self.assertRaises(CaptchaDetected):
+            gate.run(Mock(side_effect=CaptchaDetected('challenge')))
         events.append('report')
         self.assertEqual(events, ['detach', 'save', 'report'])
 
@@ -27,7 +27,7 @@ class BrowserHandoffTests(unittest.TestCase):
         detach = Mock()
         gate = BrowserHandoff(detach, on_handoff=Mock(side_effect=OSError('disk full')))
         with self.assertRaisesRegex(RuntimeError, '连接已断开；尾批 Excel 保存失败'):
-            gate.run(Mock(side_effect=ValueError('challenge')))
+            gate.run(Mock(side_effect=CaptchaDetected('challenge')))
         detach.assert_called_once_with()
         self.assertTrue(gate.waiting_for_user)
 
@@ -35,7 +35,7 @@ class BrowserHandoffTests(unittest.TestCase):
         save = Mock()
         gate = BrowserHandoff(Mock(side_effect=OSError('detach')), on_handoff=save)
         with self.assertRaises(DetachFailed):
-            gate.run(Mock(side_effect=ValueError('challenge')))
+            gate.run(Mock(side_effect=CaptchaDetected('challenge')))
         save.assert_called_once_with()
 
     def test_success_keeps_connection_and_returns_result(self):
@@ -49,7 +49,7 @@ class BrowserHandoffTests(unittest.TestCase):
     def test_failure_detaches_before_reporting_and_preserves_exception(self):
         events = []
         gate = BrowserHandoff(lambda: events.append('detach'))
-        failure = BrowseInterrupted('challenge')
+        failure = CaptchaDetected('challenge')
 
         def detect():
             events.append('detected')
@@ -65,8 +65,8 @@ class BrowserHandoffTests(unittest.TestCase):
     def test_after_handoff_no_operation_or_detach_is_repeated(self):
         detach = Mock()
         gate = BrowserHandoff(detach)
-        with self.assertRaises(ValueError):
-            gate.run(Mock(side_effect=ValueError('challenge')))
+        with self.assertRaises(CaptchaDetected):
+            gate.run(Mock(side_effect=CaptchaDetected('challenge')))
         operation = Mock()
         with self.assertRaisesRegex(RuntimeError, '等待用户'):
             gate.run(operation)
@@ -76,8 +76,8 @@ class BrowserHandoffTests(unittest.TestCase):
     def test_nested_capture_guards_detach_only_once(self):
         detach = Mock()
         gate = BrowserHandoff(detach)
-        with self.assertRaises(ValueError):
-            gate.run(lambda: gate.run(Mock(side_effect=ValueError('challenge'))))
+        with self.assertRaises(CaptchaDetected):
+            gate.run(lambda: gate.run(Mock(side_effect=CaptchaDetected('challenge'))))
         detach.assert_called_once_with()
 
     def test_keyboard_interrupt_also_releases_control(self):
@@ -92,7 +92,7 @@ class BrowserHandoffTests(unittest.TestCase):
         detach = Mock(side_effect=OSError('transport failure'))
         gate = BrowserHandoff(detach)
         with self.assertRaisesRegex(DetachFailed, '连接状态未确认'):
-            gate.run(Mock(side_effect=ValueError('challenge')))
+            gate.run(Mock(side_effect=CaptchaDetected('challenge')))
         self.assertTrue(gate.waiting_for_user)
         operation = Mock()
         with self.assertRaisesRegex(RuntimeError, '等待用户'):
@@ -104,10 +104,10 @@ class BrowserHandoffTests(unittest.TestCase):
         page = PageBrowseTests().make_page()
         detach = Mock()
         gate = BrowserHandoff(detach)
-        with self.assertRaisesRegex(ValueError, 'challenge'):
+        with self.assertRaisesRegex(CaptchaDetected, 'challenge'):
             gate.run(
                 read_page_after_browsing, page, wheel_origin=(600, 300),
-                check_html=Mock(side_effect=ValueError('challenge')),
+                check_html=Mock(side_effect=CaptchaDetected('challenge')),
             )
         detach.assert_called_once_with()
         page.mouse.move.assert_not_called()
@@ -124,6 +124,20 @@ class BrowserHandoffTests(unittest.TestCase):
         page.content.assert_not_called()
         page.evaluate.assert_not_called()
         page.mouse.wheel.assert_not_called()
+
+
+    def test_ordinary_failures_keep_attachment_and_allow_recovery(self):
+        for failure in (TimeoutError('input timed out'), ValueError('incomplete data'),
+                        BrowseInterrupted('page changed'), OSError('read failure')):
+            with self.subTest(failure=failure):
+                detach, save = Mock(), Mock()
+                gate = BrowserHandoff(detach, on_handoff=save)
+                with self.assertRaises(type(failure)):
+                    gate.run(Mock(side_effect=failure))
+                self.assertFalse(gate.waiting_for_user)
+                detach.assert_not_called()
+                save.assert_not_called()
+                self.assertEqual(gate.run(lambda: 'recovered'), 'recovered')
 
 
 class PageBrowseTests(unittest.TestCase):
@@ -173,8 +187,8 @@ class PageBrowseTests(unittest.TestCase):
 
     def test_same_url_challenge_detected_by_html_check_stops_before_input(self):
         page = self.make_page()
-        with self.assertRaisesRegex(ValueError, 'challenge'):
-            self.browse(page, Mock(side_effect=ValueError('challenge')))
+        with self.assertRaisesRegex(CaptchaDetected, 'challenge'):
+            self.browse(page, Mock(side_effect=CaptchaDetected('challenge')))
         page.mouse.move.assert_not_called()
         page.mouse.wheel.assert_not_called()
 
@@ -213,7 +227,7 @@ class PageBrowseTests(unittest.TestCase):
                 self.assertFalse(gate.waiting_for_user)
                 detach.assert_not_called()
 
-    def test_background_page_actual_input_failure_still_detaches(self):
+    def test_background_input_timeout_keeps_connection_for_host_recovery(self):
         page = self.make_page()
         page.evaluate.return_value = {'visibility': 'hidden', 'focused': False}
         page.mouse.wheel.side_effect = TimeoutError('input timed out')
@@ -221,8 +235,8 @@ class PageBrowseTests(unittest.TestCase):
         gate = BrowserHandoff(detach)
         with self.assertRaisesRegex(TimeoutError, 'input timed out'):
             gate.run(self.browse, page)
-        detach.assert_called_once_with()
-        self.assertTrue(gate.waiting_for_user)
+        detach.assert_not_called()
+        self.assertFalse(gate.waiting_for_user)
         self.assertEqual(page.mouse.wheel.call_count, 1)
         self.assertEqual(page.content.call_count, 1)
 

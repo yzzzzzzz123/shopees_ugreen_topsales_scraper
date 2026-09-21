@@ -8,6 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import math
 import random
+import re
 from typing import Callable
 from urllib.parse import urlsplit
 
@@ -18,17 +19,22 @@ class BrowseInterrupted(RuntimeError):
     """The bound page closed, changed, or is no longer an eligible page."""
 
 
+class CaptchaDetected(BrowseInterrupted):
+    """Observed CAPTCHA / human verification that requires user intervention."""
+
+
 class DetachFailed(RuntimeError):
     """Collection stopped, but releasing the connection was not confirmed."""
 
 
 class BrowserHandoff:
-    """Release control before reporting a capture failure; never auto-resume.
+    """Release control for actual CAPTCHA or explicit stop, not ordinary errors.
 
     The host supplies pw.stop for its existing CDP attachment, never browser.close,
     and wraps navigation, browsing, parsing and the enclosing capture loop in run.
-    Successful operations retain the same long-lived attachment and controller.
-    A new handoff/controller may be bound only after the user explicitly resumes.
+    Ordinary timeout/read/parse exceptions propagate to the host for automatic
+    recovery on the same attachment. They never lock waiting_for_user.
+    CAPTCHA detection must raise CaptchaDetected; after that, never auto-resume.
     """
 
     def __init__(self, detach: Callable[[], None], *, on_handoff: Callable[[], object] | None = None):
@@ -43,7 +49,7 @@ class BrowserHandoff:
             raise RuntimeError("已停止采集，等待用户明确回复继续；禁止自动重连")
         try:
             return operation(*args, **kwargs)
-        except BaseException:
+        except (CaptchaDetected, KeyboardInterrupt, SystemExit):
             if not self.waiting_for_user:
                 self.waiting_for_user = True
                 detach_error = None
@@ -74,6 +80,8 @@ def _guard_page(page, expected_url: str) -> None:
         raise BrowseInterrupted("滚动页面已关闭")
     current = page.url
     parts = urlsplit(current)
+    if parts.hostname == "shopee.ph" and re.search(r"/(?:verify|captcha)(?:/|$)", parts.path, re.I):
+        raise CaptchaDetected("检测到验证码/人工验证，保留原页：" + parts.path)
     identity = _identity(current)
     valid = (
         parts.scheme == "https" and parts.hostname == "shopee.ph"
@@ -82,7 +90,7 @@ def _guard_page(page, expected_url: str) -> None:
              or (identity is not None and identity[0] == "64922227"))
     )
     if not valid or current != expected_url:
-        raise BrowseInterrupted("滚动前页面已改变或出现验证/登录，保留当前页：" + parts.path)
+        raise BrowseInterrupted("页面身份改变或非商品/店铺页，宿主核对后恢复：" + parts.path)
 
 
 def read_page_after_browsing(
@@ -99,8 +107,10 @@ def read_page_after_browsing(
     The first DOM is a pre-scroll safety check; only the final DOM is handed to
     business parsers. Wheel deltas describe dispatched input, not measured motion.
     Background visibility or missing focus does not interrupt collection. Actual
-    read/input failures still propagate; the host must bound stalled input calls.
-    The host must call this within BrowserHandoff.run so failures release control.
+    read/input failures propagate for automatic host recovery. The host may bound
+    stalled input calls, then check fresh DOM before deciding whether to retry.
+    check_html raises CaptchaDetected only for observed human verification;
+    ordinary errors do not detach or require user confirmation.
     """
     if (len(wheel_origin) != 2 or any(
         isinstance(x, bool) or not isinstance(x, (int, float))
