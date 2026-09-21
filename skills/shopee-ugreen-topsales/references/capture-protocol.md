@@ -8,10 +8,15 @@
 且原页正常时，可按 [cua-fallback.md](cua-fallback.md) 用电脑操作接管同一原 Chrome，
 读取详情 DOM/商品内嵌 JSON；用户明确只用 A 时不自动切换。两条路线都不做环境注入，提交本协议的相同载荷；
 控制台回传使用的读取标记、分块包装、诊断字段不得进入最终 pages/cards/details。
-普通 Playwright 路线只执行真实 URL 导航、等待渲染和一次 `page.content()`，其后均对
-内存 DOM 字符串离线解析；不通过 locator/click/evaluate 逐项操控页面。
+普通 Playwright 路线按真实 URL 导航，经主 Skill 第 4 节的正常页检查、分段滚轮浏览后，
+用最终一次 `page.content()` 的内存 DOM 离线解析。滚动前另读的 DOM 仅用于安全检查；
+滚轮步长等操作诊断不进入本协议。不通过 locator/click/evaluate 逐项操控页面。
+只读可见性/焦点检查用于滚轮前台保护，检测到失焦即暂停；不自动抢回焦点。
 
-只接受完整 PH UGREEN 全量载荷，不提供抽测发布或历史清单回填分支。
+`--publish-stdin` 只接受完整 PH UGREEN 全量载荷，不提供历史清单回填分支。
+`--checkpoint-stdin` 用相同字段保存本轮进度：pages 可为真实连续前缀（保留现场 total_pages/
+next_enabled），details 可为已完成并验收的子集；不伪造剩余详情。保存频率及停止尾批
+见主 Skill 第 8 节，进度表口径见 [excel-output.md 第 7 节](excel-output.md#7-累计进度-excel)。
 每层对象字段须恰好匹配下表；缺字段、额外字段、重复 JSON 键、NaN/Infinity 均拒绝。
 `null` 仅用于下述明确允许的字段，不能用来跳过未知的必需数据。
 
@@ -100,7 +105,8 @@ Storage 凭据，不直接转向未授权网络接口。所有必需字段仍要
 
 ## 5. 交接与结果
 
-构造数据时按上述对象形状组织内存，不将载荷、HTML、截图或中间表落盘。用支持 stdin
+构造数据时按上述对象形状组织内存，不将载荷、HTML、截图落盘；允许已授权的累计进度
+Excel。全量发布用支持 stdin
 的进程工具调用以下 argv（符号值取自 [标准任务书](../assets/run_prompt_template.md) 参数绑定，不是字面参数）：
 
 ```text

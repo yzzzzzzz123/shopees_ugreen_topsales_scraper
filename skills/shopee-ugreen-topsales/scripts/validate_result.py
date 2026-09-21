@@ -74,9 +74,17 @@ def main(argv: list[str] | None = None) -> int:
         target = _target_workbook(args.project_root, args.worktree)
         if not target.is_file():
             raise ValueError(f"找不到指定 worktree 的工作簿（不会读取主项目历史结果）：{target}")
+        progress = target.with_name("ugreen_topsales_progress.xlsx")
+        if progress.is_symlink() or (progress.exists() and not progress.is_file()):
+            raise ValueError(f"进度 Excel 路径不是普通文件：{progress}")
         entries = sorted(path.name for path in target.parent.iterdir())
-        if entries != [target.name]:
-            raise ValueError(f"result/ 只能包含 {target.name}；当前为 {entries}")
+        allowed = {target.name}
+        if progress.is_file():
+            allowed.add(progress.name)
+        if set(entries) != allowed:
+            raise ValueError(
+                f"result/ 只能包含 {target.name} 及可选的 {progress.name}；当前为 {entries}"
+            )
         stats = validate_excel(target)
     except (OSError, ValueError, WorktreeError) as exc:
         print(f"错误：{exc}", file=sys.stderr)

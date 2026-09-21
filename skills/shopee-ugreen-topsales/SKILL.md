@@ -20,12 +20,13 @@ description: 接管人工已打开的原 Chrome，采集 PH UGREEN 全店 Top Sa
 
 不复制 Cookie/Storage/profile，不启动替代 Chrome/context/采集标签，不重启 Chrome，
 不擅自开放调试端口、安装扩展或修改系统代理。登录、验证码、挑战、Page Unavailable
-出现时保留原页交用户，处理后重新读取验收，不把“好了”当作有效数据证明。
+出现时立即停止采集、断开自动化附着连接，保留原页交用户；等待用户明确回复继续后
+才重新接管并读取验收，不把“好了”当作有效数据证明。
 
 ```text
 读规范与参数 → 全量任务准备日期 worktree
   → A 普通 Playwright / B 电脑操作 CUA：接管原 Chrome
-  → 全部列表 → 全部唯一详情 → 内存载荷
+  → 全部列表 → 全部唯一详情（每 50 件保存累计进度 Excel，停止时补存尾批）→ 内存载荷
   → stdin 严格发布 → 独立验收 → 唯一四表 Excel
 ```
 
@@ -57,7 +58,7 @@ description: 接管人工已打开的原 Chrome，采集 PH UGREEN 全店 Top Sa
 
 ## 3. 本地入口与日期准备
 
-公开入口 `scripts/run_scrape.py` 只负责计划、准备、stdin 发布和独立验收，不自动操作
+公开入口 `scripts/run_scrape.py` 只负责计划、准备、stdin 进度保存/发布和独立验收，不自动操作
 浏览器。主项目解释器为 `.venv/bin/python`；依赖见 `pyproject.toml`。
 
 ```text
@@ -73,7 +74,8 @@ project_root/worktree/branch/python/runner/output/source_head/worktree_head。
 主根与日期源码必须 clean、同 HEAD、分支正确；Python 来自主根，发布 runner 来自
 目标日期目录。prepare 后沿用启动日，跨午夜不重建另一轮身份。
 
-唯一结果：`worktrees/YYYYMMDD_ugreen_topsales/result/ugreen_topsales.xlsx`。
+正式结果：`worktrees/YYYYMMDD_ugreen_topsales/result/ugreen_topsales.xlsx`。
+采集中累计进度表：同目录 `ugreen_topsales_progress.xlsx`，与全量正式结果区分。
 日期快照包含同提交的完整 Skill/源码；模板、规范只读。维护改动需另行授权提交，
 不能自动 commit/stash/reset、热补日期源码、同步/重建 worktree 或删除冲突文件。
 
@@ -87,14 +89,41 @@ project_root/worktree/branch/python/runner/output/source_head/worktree_head。
    `chromium.connect_over_cdp("chrome", no_defaults=True)` 附着用户已开启远程调试的 Chrome。
    no_defaults 避免默认上下文覆盖；不额外设置浏览器环境或 init script。
    它不是所有机器的通用保证，也不证明此前外部修改已恢复。
-4. 只把 Playwright 用作浏览器渲染器：按真实链接 `page.goto`，等待渲染后一次
-   `page.content()` 取得完整 DOM，再由代码离线解析。不要以 locator/click/evaluate 打开
-   图库、选择规格或逐项读取；不读取 Cookie/密码/Storage、整份账号状态或隐藏网络接口。
+4. 按真实链接 `page.goto`，正常页使用
+   [page_browse.py](scripts/page_browse.py) 的 `read_page_after_browsing` 分段滚轮浏览，
+   再从返回的最终完整 DOM 离线解析。宿主传入已绑定的原 `page`、根据当前内容视口
+   核对的 `wheel_origin=(x,y)` 和检测到挑战/不完整页面即抛异常的 `check_html(html,url)`；
+   不硬编码其他窗口的坐标。辅助函数不负责连接或导航，也不保存数据。
+   加载后随机停留 2～4 秒，先读 DOM 检查页面；随后 `mouse.move` 到已核对的落点，
+   用 `mouse.wheel` 分 3～5 次向下滚动，每次 280～560 像素并停留 0.9～2.4 秒。
+   约 35% 的页面插入一次 100～220 像素的短回滚并停留 1～2 秒，最后再等 1.2～2.5 秒，
+   取得最终 DOM 并重新检查。滚轮事件返回不代表滚动已经结束，保留事件后的等待。
+   滚动前的 DOM 只用于安全检查，业务解析只接收滚动后的 DOM；每步检查原页身份，
+   关闭、跳转或挑战即停止，不尝试用滚轮处理验证。输入步长不宣称为实测滚动距离。
+   仅额外用 `evaluate` 只读 `document.visibilityState/document.hasFocus()`；目标页
+   必须保持前台且内容区有焦点，检测到失焦就暂停，不自动切换标签或抢回焦点。
+   前台检查不能消除检查后失焦的竞态，也不是已发出的 `mouse.wheel` 的超时保证；
+   宿主发现输入长时间不返回时中断本次调用，保留原页与已取得的数据，不反复重试。
+   这替换固定驻留，不保证避免验证码，也不改变导航间隔、批次冷却或字段口径。
+   不以 locator/click/evaluate 打开图库、选择规格或逐项读取，不执行 JS 滚动或环境注入；
+   不读取 Cookie/密码/Storage、整份账号状态或隐藏网络接口。
    结束只断开附着连接，不关闭用户 page/context/Chrome。
 5. 单路串行；每次页/商品导航前独立随机取 2～3 秒间隔，每完成 50 件额外随机冷却
-   3～5 分钟，页面加载耗时可额外增加实际间隔。核对内容实际更新。挑战立即原页交用户，
-   冷却 15～30 分钟且用户要求继续后只做一次正常续跑；仍有挑战则再次停止，不循环刷新、
-   切身份/代理或切工具绕过。
+   3～5 分钟，页面加载耗时可额外增加实际间隔。核对内容实际更新。发现挑战按下一项
+   立即断开交用户，不循环刷新、切身份/代理或切工具绕过。
+6. 按第 8 节绑定累计保存器后，附着成功时绑定
+   `control = BrowserHandoff(pw.stop, on_handoff=lambda: saver.maybe_save(force=True))`，
+   用 `control.run(采集函数, …)`
+   包住导航、滚动、DOM 检查、离线验收及外层采集循环。URL/DOM 检查一旦报挑战或
+   其他采集异常，先执行断开回调，再向宿主抛出异常；不等批次结束、截图、日志或冷却。
+   回调只用当前附着的 `pw.stop()`，不用 `browser/context/page.close()`，保留原页和内存数据。
+   控制器随即锁定等待用户，禁止后续采集；先执行断开，再离线保存已取得数据。
+   断开失败须报“连接状态未确认”，不能宣称已脱离；仍尝试保存数据，不因断连异常丢弃尾批。
+   等待期间不读取/轮询页面、不自动重连；验证码消失或计时结束都不是续跑信号。
+   只有用户明确回复继续后才重新附着、绑定新控制器，先验收原页，再正常续跑一次；
+   若仍有挑战立即再次断开。B 立即停止全部电脑输入，不改用其他工具继续读页。
+   断开只释放本采集器的连接，不声称清除了此前接管影响或其他客户端连接；现有检查
+   触发即处理，不承诺验证码出现后毫秒级检测。
 
 直接读取已在真实环境抽测成功，见第 9 节。新的未验证实现仍先做隔离最小实验，
 成功后再最小接入项目并回归；离线测试不代替真实链路证据。
@@ -162,9 +191,34 @@ script[type="text/mfe-initial-data"] JSON
   SKU 可共享真实映射图。允许域名和最终 URL 形状见 capture-protocol.md。
 
 models_complete/gallery_complete 只有完整现场证据才设 true；声明和结构检查不是
-来源证明。任一未解决缺失不能发布正式部分表。
+来源证明。任一未解决缺失不能发布全量正式表，但必须按第 8 节保存已取得的进度。
 
 ## 8. S5～S6：内存发布与独立验收
+
+### 采集中与停止时保存（长期默认规则）
+
+- “50 条”指 50 件已完成并验收的唯一商品详情，不是 SKU 行、图片行或列表卡。
+  在累计第 50、100、150…件后，进入下一件或批次冷却之前保存；列表读取完成也保存一次。
+  停止、验证码、异常、正常结束时补存当前全部数据，包括不足 50 件的尾批。
+- 同一轮累计、原子更新 `result/ugreen_topsales_progress.xlsx`，不生成每批独立文件。
+  保存已取得的全部列表记录及已完成详情；未采集详情明确标注，字段不补零或占位 SKU。
+  即使全部详情已取得，进度表仍不是全量验收通过的正式结果。四表进度口径见
+  [excel-output.md 第 7 节](references/excel-output.md#7-累计进度-excel)。
+- 宿主用 `checkpoint_result.CheckpointSaver(snapshot_factory, save, saved_count=已成功保存详情数)`，
+  每件详情加入内存后调用 `saver.maybe_save()`；停止/结束调用 `saver.maybe_save(force=True)`。
+  `snapshot_factory` 每次返回本轮当前载荷，`save` 调用 `write_snapshot` 或下述 stdin 入口。
+  仅保存成功、回读核对通过才推进保存计数；续跑从 58 件开始，下次仍在 100 件保存。
+- 从主根入口执行 `ROOT_RUNNER --checkpoint-stdin --project-root ROOT --worktree DAILY`，
+  stdin 结构沿用下方载荷；仅进度入口允许连续的已取得列表前缀与详情子集。
+  `captured_at` 在进度表中标为保存时间，不伪称此时重新读取过页面。JSON 仅走内存/管道。
+  开始新增采集前确认写表所需的 Node 和运行时 `@oai/artifact-tool` 可用；渲染器读取
+  `UGREEN_ARTIFACT_NODE_MODULES`，未设置时使用 Codex 运行时依赖缓存，不改依赖目录。
+- 进度写入保留日期注册、启动日、路径与字段检查；允许主根有维护改动时先保存已有数据，
+  不要求为了保全数据先提交 Git，不热补日期源码。全量正式发布的 clean/同 HEAD 门禁不变。
+- 先断开浏览器再保存尾批；保存失败保留上一份有效进度表、内存和暂停状态，报告失败，
+  不继续采集。未知文件、其他轮次或会丢失已保存身份/详情的覆盖必须拒绝。
+
+### 完整结果发布
 
 依 capture-protocol.md 构造精确字段的内存对象：
 
@@ -202,7 +256,7 @@ cwd = DAILY
 ```
 
 核对 collection_mode=full_topsales、audit_status=通过、计数一致、日期源码 clean、
-result 仅有正式表。Excel 验收只证明内部一致，必须结合本轮全部现场覆盖才算全量完成。
+result 只含正式表及可选的规定进度表。Excel 验收只证明内部一致，必须结合本轮全部现场覆盖才算全量完成。
 
 ## 9. 实现边界、证据与交付
 
@@ -210,7 +264,9 @@ result 仅有正式表。Excel 验收只证明内部一致，必须结合本轮�
 | --- | --- |
 | run_scrape.py / prepare_daily_worktree.py | 计划、规范检查、日期准备、stdin 分派 |
 | publish_result.py / excel.py / validate_result.py | 严格转换、门禁、四表发布与独立验收 |
+| checkpoint_result.py / checkpoint_excel.mjs | 每 50 件与停止尾批的累计进度 Excel、原子替换和逐单元格回读；不联网 |
 | list_html.py | 只在内存解析列表 HTML |
+| page_browse.py | 原页滚轮浏览、DOM 检查及 BrowserHandoff 异常即断开保护；不连接/启动浏览器，不自动发布 |
 | scraper.py / capture_list_page.cjs | 业务解析与内部遗留编排；旧私有 profile 启动不是 A 接管器，公开 CLI 不调用它 |
 
 旧解析器的无条件占位 SKU、无条件拼 CDN、单图回退和旧标题优先级不能直接用于正式事实；
@@ -223,9 +279,9 @@ result 仅有正式表。Excel 验收只证明内部一致，必须结合本轮�
 此前 B 取得过 27 页/810 个唯一商品链接、两件的 6/12 SKU 和各 9 张图库原图。
 均不是今日全店全部详情/最终 Excel 完成的证明，也不是以后运行的固定数量。
 
-字段/身份/Git/模板门禁失败报告具体缺口，不补造、不发布部分结果；挑战原页交用户。
+字段/身份/Git/模板门禁失败报告具体缺口，不补造全量结果；已验收数据按第 8 节保存进度。
 内存丢失后重新现场取数，不从旧表恢复，不承诺不存在的持久化 resume 服务。
-不落盘 HTML/JSON/截图/trace/响应/会话/部分 Excel，仅发布模块管理受控候选。
+不落盘 HTML/JSON/截图/trace/响应/会话；允许累计进度 Excel 和写表模块受控候选。
 
 正式交付仅为日期 result/ugreen_topsales.xlsx，报告真实路线、列表/商品/SKU/主副图
 数量和独立验收，给可用链接或附件；不以本地路径冒充已发送到手机，不声称图片已内嵌。

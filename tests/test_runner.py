@@ -67,7 +67,9 @@ class RunnerTests(unittest.TestCase):
         self.assertIs(plan["randomized_navigation_interval"], True)
         self.assertEqual(plan["batch_size"], 50)
         self.assertEqual(plan["batch_cooldown_seconds"], {"minimum": 180, "maximum": 300})
-        self.assertEqual(plan["challenge_cooldown_seconds"], {"minimum": 900, "maximum": 1800})
+        self.assertEqual(plan["checkpoint_every_details"], 50)
+        self.assertTrue(plan["flush_checkpoint_on_stop"])
+        self.assertEqual(plan["challenge_action"], "detach_then_checkpoint_wait_for_user")
         self.assertEqual(set(plan["contract_documents"]), set(runner.CONTRACT_DOCUMENTS))
         self.assertGreater(len(plan["required_steps"]), 1)
         self.assertIs(plan["full_crawl_completed"], False)
@@ -145,6 +147,15 @@ class RunnerTests(unittest.TestCase):
         publish.assert_called_once_with(payload, self.root, self.daily)
         self.assertEqual(json.loads(output), receipt)
         self.assertFalse(self.daily.exists())
+
+    def test_checkpoint_forwards_stdin_to_partial_writer_without_publication(self):
+        payload = {"schema_version":"1.0","pages":[],"details":[]}
+        receipt = {"collection_mode":"partial_topsales","audit_status":"未完成"}
+        write = Mock(return_value=receipt)
+        code, output, errors = self.invoke(*self.bound_options("--checkpoint-stdin"), stdin=json.dumps(payload), modules={"checkpoint_result":SimpleNamespace(write_snapshot=write)})
+        self.assertEqual((code, errors), (0, ""))
+        write.assert_called_once_with(payload, self.root, self.daily)
+        self.assertEqual(json.loads(output), receipt)
 
     def test_publish_requires_strict_json_object_and_does_not_read_paths(self):
         for value in ("", "/old.xlsx", '"/old.xlsx"', "[]", "null", '{"x":NaN}', '{"x":Infinity}', '{"x":1,"x":2}', '{}{}'):

@@ -35,10 +35,11 @@ def _parser() -> argparse.ArgumentParser:
     modes.add_argument("--plan", action="store_true", help="只读输出全量任务交接计划（默认）")
     modes.add_argument("--prepare", action="store_true", help="创建或安全复用上海本日 worktree")
     modes.add_argument("--publish-stdin", action="store_true", help="验收 stdin 现场 JSON 并原子发布四表")
+    modes.add_argument("--checkpoint-stdin", action="store_true", help="保存本轮已采集数据为累计进度 Excel，不表示全量完成")
     modes.add_argument("--validate", action="store_true", help="独立只读验收明确指定的日期结果")
     modes.add_argument("--check-contract", action="store_true", help="只读检查 Skill 内文档和 Excel 内容规范")
     parser.add_argument("--project-root", type=Path, help="当前 Skill 所属主项目根目录")
-    parser.add_argument("--worktree", type=Path, help="--publish-stdin/--validate 的明确日期 worktree")
+    parser.add_argument("--worktree", type=Path, help="--publish-stdin/--checkpoint-stdin/--validate 的明确日期 worktree")
     parser.add_argument("--date", help="仅 --prepare 可用，YYYY-MM-DD，必须为上海本日")
     return parser
 
@@ -92,15 +93,19 @@ def _plan(root: Path, run_date: date) -> dict:
         "randomized_navigation_interval": True,
         "batch_size": 50,
         "batch_cooldown_seconds": {"minimum": 180, "maximum": 300},
-        "challenge_cooldown_seconds": {"minimum": 900, "maximum": 1800},
+        "checkpoint_every_details": 50,
+        "checkpoint_output": str(worktree / "result/ugreen_topsales_progress.xlsx"),
+        "flush_checkpoint_on_stop": True,
+        "challenge_action": "detach_then_checkpoint_wait_for_user",
         "required_steps": [
             "读取 Skill 内任务书、内容规范及现场数据协议，冻结上海启动日；规范只读且不是业务种子。",
             "检查主项目与日期 worktree clean、同一已提交 HEAD；按 --prepare 创建或安全复用本日目录。",
             "宿主 Agent 使用已有工具读取原 Chrome 目标页，确认 PH UGREEN 与 Top Sales。",
+            "A 路线每页按 Skill 第 4 节调用 page_browse.py：正常页检查、分段滚轮与随机停留，最终 DOM 离线解析；滚动不保证免验证码。",
             "单路以每次随机 2～3 秒导航间隔读取本轮全部列表页；列表页和卡片不计入详情批次。",
             "逐个访问本轮每个唯一商品详情，核对身份、完整 model/SKU 和图库；缺字段不编造。",
-            "详情阶段每完成 50 个商品额外随机冷却 3～5 分钟。",
-            "登录、验证码或访问挑战留在原页交用户；真实挑战冷却 15～30 分钟，用户要求继续后只正常续跑一次，仍异常则停止。",
+            "详情阶段每完成 50 个商品累计保存进度 Excel，再随机冷却 3～5 分钟；停止和结束时保存不足 50 件的尾批。",
+            "登录、验证码或访问挑战先立即断开自动化、保留原页，再保存已有数据；等待用户明确继续后才重新附着验收，不自动重连。",
             "将完整现场数据按 references/capture-protocol.md 通过 stdin JSON 交给 --publish-stdin；不落盘原始数据。",
             "独立执行 --validate，核对四表与抓取核验；全部通过后才交付日期 Excel。",
         ],
@@ -138,11 +143,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             "不再从此入口启动浏览器、复制 profile 或以历史表作种子。"
         )
     args = parser.parse_args(raw)
-    if args.publish_stdin or args.validate:
+    if args.publish_stdin or args.checkpoint_stdin or args.validate:
         if args.project_root is None or args.worktree is None:
-            parser.error("--publish-stdin/--validate 必须明确指定 --project-root 与 --worktree")
+            parser.error("--publish-stdin/--checkpoint-stdin/--validate 必须明确指定 --project-root 与 --worktree")
     elif args.worktree is not None:
-        parser.error("--worktree 仅用于 --publish-stdin 或 --validate")
+        parser.error("--worktree 仅用于 --publish-stdin、--checkpoint-stdin 或 --validate")
     if args.date is not None and not args.prepare:
         parser.error("--date 仅用于 --prepare，且只允许上海本日")
 
@@ -161,6 +166,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             from publish_result import publish
 
             receipt = publish(_read_capture_payload(), root, args.worktree)
+        elif args.checkpoint_stdin:
+            from checkpoint_result import write_snapshot
+
+            receipt = write_snapshot(_read_capture_payload(), root, args.worktree)
         elif args.validate:
             from validate_result import main as validate_main
 

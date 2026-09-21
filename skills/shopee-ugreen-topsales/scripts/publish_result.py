@@ -286,6 +286,11 @@ def _check_destination(target: Path, candidate: Path | None = None) -> None:
         if not target.parent.is_dir():
             raise ValueError("result 路径不是目录")
         allowed = {target} | ({candidate} if candidate is not None else set())
+        progress = _safe_path(target.with_name("ugreen_topsales_progress.xlsx"))
+        if progress.exists():
+            if not progress.is_file():
+                raise ValueError("进度 Excel 路径不是普通文件")
+            allowed.add(progress)
         if any(entry not in allowed for entry in target.parent.iterdir()):
             raise ValueError("result/ 含未知文件；不会自动删除或忽略")
     if candidate is not None:

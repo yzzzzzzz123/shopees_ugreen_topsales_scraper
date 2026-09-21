@@ -4,7 +4,9 @@
 本轮 Top Sales 列表和每个商品详情，按内容规范输出四表 Excel，再独立验收。
 不复制浏览器会话、不另起浏览器。只有两套网页操作方式，共用同一发布链路。
 
-- A：普通 Playwright，接管人工已打开的原 Chrome，读取 DOM 与商品内嵌 JSON。
+- A：普通 Playwright，接管人工已打开的原 Chrome，检查正常页并分段滚轮浏览，
+  再读取最终 DOM 与商品内嵌 JSON；宿主辅助函数见
+  [page_browse.py](skills/shopee-ugreen-topsales/scripts/page_browse.py)。
 - B：电脑操作 CUA，接管人工已打开的原 Chrome，必要时通过原 DevTools 只读取数；
   详见 [CUA 方法](skills/shopee-ugreen-topsales/references/cua-fallback.md)。
 
@@ -27,7 +29,11 @@
 “跑一遍”“完整走 Skill”默认就是上述全量交付。只有明确要求“抽测几页/只文字”，
 才缩小到现场字段覆盖报告；只分析既有表则不启动网页采集。
 
-默认店铺 ID `64922227`，币种 PHP。页和商品之间至少间隔 10 秒，单路串行；
+默认店铺 ID `64922227`，币种 PHP。每次导航前随机间隔 2～3 秒，另加页面加载与
+滚轮停留时间；每完成 50 件详情随机冷却 3～5 分钟，单路串行。滚动不保证避免验证码；
+滚轮浏览期间目标页需保持前台且内容区有焦点，检测到失焦就暂停，不自动抢回焦点。
+检测到验证码或采集异常，先断开自动化连接再通知用户；保留 Chrome 原页，等待用户
+明确回复继续后才重新接管。该停止条件已固化到 Skill 和 `BrowserHandoff` 保护中。
 原窗口、标签和登录状态全程保留。缺少 model、SKU 映射或图库证据不能用旧值补齐。
 
 ## 规范与结果分开
@@ -40,7 +46,9 @@
   JSON 结构检查或 URL 白名单不能独立证明网站 SKU/图库全集。
 - 唯一正式结果为 `worktrees/YYYYMMDD_ugreen_topsales/result/ugreen_topsales.xlsx`，
   包含 `商品汇总`、`SKU明细`、`图片明细`、`抓取核验`。日期固定为上海启动日。
-  规范和其他日期结果不动，失败不覆盖有效结果，也不发布部分采集。
+  规范和其他日期结果不动，失败不覆盖有效正式结果。
+- 长期默认每完成 50 件唯一商品详情累计更新同目录 `ugreen_topsales_progress.xlsx`；
+  列表完成、停止/挑战/异常和结束时补存尾批。进度表标明未完成，绝不冒充全量通过。
 - 全量要求主根和日期 worktree clean、同一已提交 HEAD。正常全量请求包括准备目标本日
   worktree，但不包括自动提交、stash、reset、删除或改历史目录；见 [worktree.md](skills/shopee-ugreen-topsales/references/worktree.md)。
 
@@ -64,7 +72,8 @@
 | `--check-contract` | 只读检查 Skill 内文档及规范工作簿 schema，不是网站采集成功证明 |
 
 `ROOT`、`DAILY` 使用明确绝对路径。现场 JSON 仅内存/管道交接，不保存原始响应、
-截图、JSON 或部分 Excel。完整命令和阻断处理见 [任务书模板](skills/shopee-ugreen-topsales/assets/run_prompt_template.md)。
+截图或 JSON；允许上述累计进度 Excel，主根入口 `--checkpoint-stdin` 接收本轮已采集载荷。
+完整命令和阻断处理见 [任务书模板](skills/shopee-ugreen-topsales/assets/run_prompt_template.md)。
 
 ## 实现状态与历史边界
 

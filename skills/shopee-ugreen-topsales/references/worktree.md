@@ -11,6 +11,7 @@
 | 日期目录 | `worktrees/YYYYMMDD_ugreen_topsales` |
 | 日期分支 | `daily/YYYYMMDD-ugreen-topsales` |
 | 正式结果 | 该日期目录下 `result/ugreen_topsales.xlsx` |
+| 累计进度 | 同目录 `result/ugreen_topsales_progress.xlsx`；每 50 件及停止尾批保存 |
 | 规范工作簿 | 主根与日期快照中的 `skills/shopee-ugreen-topsales/assets/ugreen_topsales.xlsx`，均只读且哈希一致 |
 | 执行源码 | 发布时必须调用目标日期目录内的 `skills/shopee-ugreen-topsales/scripts/run_scrape.py` |
 | Python | 使用 `--prepare` 回执中的 `python`，当前实现为主根 `.venv/bin/python` |
@@ -46,11 +47,12 @@ shopees_ugreen_topsales_scraper/
         ├── skills/shopee-ugreen-topsales/ # 同提交的完整 Skill；assets/references 只读
         ├── …                            # 其余已跟踪源文件按 Git 快照保留
         └── result/
-            └── ugreen_topsales.xlsx      # 唯一正式交付文件，Git ignored
+            ├── ugreen_topsales.xlsx      # 唯一全量正式交付文件，Git ignored
+            └── ugreen_topsales_progress.xlsx # 累计进度，不冒充全量通过
 ```
 
 日期快照完整保留已跟踪源码；上图不是允许删除其他源码的白名单。运行产物则严格只有
-上述 Excel。不生成任务书副本、原始 HTML/JSON、截图、响应、trace、manifest、部分表、
+上述正式/累计进度 Excel。不生成任务书副本、原始 HTML/JSON、截图、响应、trace、manifest、
 会话资料或 token 文件。本次任务参数绑定在宿主上下文，不改写快照中的任务书。
 
 ## 3. 准备门禁
@@ -82,6 +84,9 @@ shopees_ugreen_topsales_scraper/
 - 同日完整重跑可以在全部验收后替换同日结果；不修改其他日期，也不改规范工作簿。
 - 发布前失败保留已有正式文件；不能把它当作失败本轮的新结果交付。
 - `result/` 有未知文件时拒绝；不自动清除或扩大忽略列表。
+- `ugreen_topsales_progress.xlsx` 是明确允许的累计进度文件，不当作未知文件或正式结果。
+  进度保存由主根新入口执行，只核对注册归属、启动日、路径和字段，允许主根维护脏状态时
+  先保全已采集数据；不自动提交或同步日期源码，不豁免正式全量发布的 clean/同 HEAD 门禁。
 - 不在日期快照热修补代码或规范。修复在主根完成，经用户审阅/提交后才进入新快照；
   同日快照与新 HEAD 不一致时需报告，不暗中同步或重建。
 - Git 提交、推送、拉取、清理、删除日期或分支均非正常采集的隐含步骤，须另有明确请求。
@@ -91,6 +96,7 @@ shopees_ugreen_topsales_scraper/
 正式结果在 ignored `result/`，结束时日期源码保持 Git clean。用明确的根和日期参数
 独立验收，不回退主根、规范表或另一日期。回执走 stdout，不另写 JSON 文件。
 
-挑战页或必要人工输入时保留原页面；用户处理后重读身份和字段再继续。同一宿主仍保有
+挑战页或必要人工输入时立即断开并保留原页面，再保存已有数据及不足 50 件尾批；
+用户明确回复继续后才重新附着、重读身份和字段。同一宿主仍保有
 本轮内存时，可接着未完成的页/商品；内存丢失或无法证明数据属于本轮时重新现场采集，
 不借旧 Excel、日志或历史访问记录“恢复”。不得承诺不存在的持久化断点或 resume 服务。

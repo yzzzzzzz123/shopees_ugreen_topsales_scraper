@@ -1,0 +1,58 @@
+import fs from "node:fs/promises";
+import path from "node:path";
+import os from "node:os";
+import {createRequire} from "node:module";
+import {pathToFileURL} from "node:url";
+const dependencies = process.env.UGREEN_ARTIFACT_NODE_MODULES ?? path.join(os.homedir(), ".cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules");
+const require = createRequire(path.join(dependencies, "__ugreen_loader__.cjs"));
+const {Workbook, SpreadsheetFile} = await import(pathToFileURL(require.resolve("@oai/artifact-tool")).href);
+let input = "";
+process.stdin.setEncoding("utf8");
+for await (const chunk of process.stdin) input += chunk;
+const data = JSON.parse(input);
+const names = ["商品汇总", "SKU明细", "图片明细", "抓取核验"];
+const tableNames = ["ProgressProducts", "ProgressSkus", "ProgressImages", "ProgressAudit"];
+const widths = [[10,9,10,15,17,65,20,24,15,14,11,48,11,48,34],[10,9,15,17,65,19,55,48,48],[10,9,15,17,65,12,12,48,48],[26,70,75]];
+const wb = Workbook.create();
+const literal = x => typeof x === "string" && x.startsWith("=") ? "'" + x : x;
+for (let k=0;k<names.length;k++) {
+  const sheet = wb.worksheets.add(names[k]);
+  const headers=data.headers[k], rows=data.sheets[k], last=String.fromCharCode(64+headers.length), end=Math.max(7,6+rows.length);
+  sheet.showGridLines=false;
+  sheet.getRange(`A1:${last}${end}`).format.font={name:"Arial",size:10,color:"#242424"};
+  sheet.getRange(`A1:${last}${end}`).format.verticalAlignment="center";
+  sheet.mergeCells(`A2:${last}2`);
+  sheet.getRange("A2").values=[["UGREEN Top Sales "+names[k]+"（采集进度）"]];
+  sheet.getRange("A2").format.font={name:"Arial",size:16,bold:true,color:"#222222"};
+  sheet.getRange("A2").format.rowHeight=30;
+  sheet.mergeCells(`A3:${last}3`);
+  sheet.getRange("A3").values=[[data.status]];
+  sheet.getRange("A3").format.font={name:"Arial",size:10,color:"#9A6700"};
+  sheet.mergeCells(`A4:${last}4`);
+  sheet.getRange("A4").values=[["启动时间："+data.started_at]];
+  sheet.getRange("A5").values=[["保存时间："+data.saved_at]];
+  sheet.mergeCells(`A5:${last}5`);
+  sheet.getRange(`A6:${last}6`).values=[headers];
+  if(rows.length) sheet.getRange(`A7:${last}${end}`).values=rows.map(row=>row.map(literal));
+  const table=sheet.tables.add(`A6:${last}${end}`,true,tableNames[k]);
+  table.style="TableStyleMedium2";
+  sheet.getRange(`A6:${last}6`).format={fill:"#C9412B",font:{name:"Arial",size:10,bold:true,color:"#FFFFFF"},horizontalAlignment:"center",verticalAlignment:"center",wrapText:true,rowHeight:30};
+  sheet.getRange(`A7:${last}${end}`).format.rowHeight=42;
+  for(let c=0;c<widths[k].length;c++) sheet.getRangeByIndexes(0,c,end,1).format.columnWidth=widths[k][c];
+  const textCols=k===0?[3,4]:k<3?[2,3, ...(k===1?[5]:[])]:[];
+  for(const c of textCols) sheet.getRangeByIndexes(6,c,end-6,1).setNumberFormat("@");
+  if(k===0){
+    sheet.getRange(`G7:G${end}`).setNumberFormat('"₱"#,##0.00');
+    sheet.getRange(`F7:F${end}`).format.wrapText=true;
+    sheet.getRange(`O7:O${end}`).conditionalFormats.add("containsText",{text:"未采集",format:{fill:"#FFF2CC",font:{color:"#9A6700"}}});
+  } else if(k<3) {
+    sheet.getRange(`E7:E${end}`).format.wrapText=true;
+    if(k===1) sheet.getRange(`G7:G${end}`).format.wrapText=true;
+  } else sheet.getRange(`B7:C${end}`).format.wrapText=true;
+  sheet.freezePanes.freezeRows(6);
+  if(k<3) sheet.freezePanes.freezeColumns(k===0?5:4);
+}
+wb.recalculate();
+const out=await SpreadsheetFile.exportXlsx(wb);
+await out.save(process.argv[2]);
+console.log(JSON.stringify({saved:true, ...data.counts}));

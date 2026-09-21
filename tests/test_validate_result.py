@@ -84,6 +84,15 @@ class ValidateResultTests(unittest.TestCase):
         self.assertEqual(self.output.read_bytes(), b"new daily workbook")
         self.assertEqual(self.old_output.read_bytes(), b"old main workbook")
 
+    def test_optional_progress_workbook_is_allowed_during_final_validation(self):
+        progress = self.output.with_name("ugreen_topsales_progress.xlsx")
+        progress.write_bytes(b"cumulative progress workbook")
+        code, out, err, validate = self.invoke()
+        self.assertEqual(code, 0, err)
+        self.assertEqual(json.loads(out)["path"], str(self.output))
+        validate.assert_called_once_with(self.output)
+        self.assertEqual(progress.read_bytes(), b"cumulative progress workbook")
+
     def test_known_detail_scope_is_reported_without_claiming_full_topsales(self):
         self.stats.collection_mode = "known_product_details"
         code, out, _, _ = self.invoke()
