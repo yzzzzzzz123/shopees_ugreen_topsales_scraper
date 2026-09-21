@@ -8,6 +8,8 @@
 且原页正常时，可按 [cua-fallback.md](cua-fallback.md) 用电脑操作接管同一原 Chrome，
 读取详情 DOM/商品内嵌 JSON；用户明确只用 A 时不自动切换。两条路线都不做环境注入，提交本协议的相同载荷；
 控制台回传使用的读取标记、分块包装、诊断字段不得进入最终 pages/cards/details。
+普通 Playwright 路线只执行真实 URL 导航、等待渲染和一次 `page.content()`，其后均对
+内存 DOM 字符串离线解析；不通过 locator/click/evaluate 逐项操控页面。
 
 只接受完整 PH UGREEN 全量载荷，不提供抽测发布或历史清单回填分支。
 每层对象字段须恰好匹配下表；缺字段、额外字段、重复 JSON 键、NaN/Infinity 均拒绝。
@@ -63,11 +65,15 @@
 | SKU 对象字段 | 类型 | 约束 |
 | --- | --- | --- |
 | `model_id` | string | 纯数字文本；同商品内按数值身份唯一，不能靠前导 0 制造不同 model |
-| `sku_props` | object | 非空的“非空规格名称 → 非空规格选项文本”映射，必须对应真实 model |
+| `sku_props` | object | 非空的“非空规格名称 → 非空规格选项文本”映射，必须对应真实 model；下述严格单规格空字段情形固定写 `{"规格":"单规格"}` |
 | `sku_image_url` | string / null | 当前真实专属图映射；确认没有专属图可 null，未取到不能装作没有 |
 
 不得从可见选项生成笛卡尔组合、用 query 的单个 model 代表全部 SKU、根据历史 SKU 数
-补行、或用主图替补 SKU 图。单规格商品也需真实 model 和业务规格标识，不能编造。
+补行、或用主图替补 SKU 图。仅当商品恰有一个真实 model、恰有一层规格，且 tier 名称、
+唯一 option、model 名称均为空时，固定用 `{"规格":"单规格"}` 表示页面的无规格事实；
+多个 model、存在真实规格或结构解析失败不能套用，也不能改用 model ID 占位。
+SKU 图先使用具体 model/extinfo 的 `sku_image/image/image_id`；这些直接字段全空时才使用
+该 model 的 tier_index 对应 tier 图片。同一优先级内多个非空引用冲突时拒绝，不跨层随取。
 两个 complete 标志是**宿主对实际读取结果的声明，不是证明机制**。仅截图/可访问性文字
 无法取得 model ID 和完整 URL 时，必须报告“未取得/未验证”，不能设置 true 来通过校验。
 
@@ -81,7 +87,11 @@
   商品/店铺 ID 从 URL 重算，不另接收 Agent 提交的身份字段。
 - 当前图片校验支持 `down-ph.img.susercontent.com` 或 `cf.shopee.ph` 的
   `/file/<标识>` 原图 URL；不带 query，不收 `_tn` / `_t` 缩略路径。主副图库不能重复。
-  实际完整 URL 若超出支持范围，说明兼容缺口，不能猜换域名或篡改路径。
+  已有合规完整 URL 必须原样保留。只有权威 `product_images.images`、model/extinfo 或 tier
+  图片字段给出合法图片 ID，且同一完整 DOM 没有该 ID 的绝对原图 URL 时，才对这个缺失项
+  生成 `https://down-ph.img.susercontent.com/file/<图片ID>`，并重新通过本条 URL 校验；
+  不得覆盖已有 URL、去缩略后缀、改变图片顺序或给其他字符串套域名。实际完整 URL 若
+  超出支持范围，说明兼容缺口，不能猜换域名或篡改路径。
 - 文本不超过 Excel 单元格 32767 字符，不含不可写入单元格的控制字符。
 - 数值须有限且不超过 `2**53-1`，不接受用 true/false 代替整数或价格。
 

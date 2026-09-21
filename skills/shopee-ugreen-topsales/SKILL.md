@@ -87,11 +87,14 @@ project_root/worktree/branch/python/runner/output/source_head/worktree_head。
    `chromium.connect_over_cdp("chrome", no_defaults=True)` 附着用户已开启远程调试的 Chrome。
    no_defaults 避免默认上下文覆盖；不额外设置浏览器环境或 init script。
    它不是所有机器的通用保证，也不证明此前外部修改已恢复。
-4. 用 locator、只读 page.evaluate 读取当前文档；按真实链接正常导航、按实际控件打开
-   图片查看器或选择规格。不读取 Cookie/密码/Storage、整份账号状态或隐藏网络接口。
+4. 只把 Playwright 用作浏览器渲染器：按真实链接 `page.goto`，等待渲染后一次
+   `page.content()` 取得完整 DOM，再由代码离线解析。不要以 locator/click/evaluate 打开
+   图库、选择规格或逐项读取；不读取 Cookie/密码/Storage、整份账号状态或隐藏网络接口。
    结束只断开附着连接，不关闭用户 page/context/Chrome。
-5. 单路串行，页/商品导航间至少 10 秒；核对内容实际更新。挑战立即原页交用户，
-   不循环刷新、切身份/代理或切工具绕过。
+5. 单路串行；每次页/商品导航前独立随机取 2～3 秒间隔，每完成 50 件额外随机冷却
+   3～5 分钟，页面加载耗时可额外增加实际间隔。核对内容实际更新。挑战立即原页交用户，
+   冷却 15～30 分钟且用户要求继续后只做一次正常续跑；仍有挑战则再次停止，不循环刷新、
+   切身份/代理或切工具绕过。
 
 直接读取已在真实环境抽测成功，见第 9 节。新的未验证实现仍先做隔离最小实验，
 成功后再最小接入项目并回归；离线测试不代替真实链路证据。
@@ -144,14 +147,19 @@ script[type="text/mfe-initial-data"] JSON
 - 完整真实 models 的 ID 为纯数字文本、查重、保留实际顺序。用 extinfo.tier_index
   或 tier_index 映射每层 tier_variations.options，校验维数、整数边界和非空规格名。
   不用单个 display_model_id、选项笛卡尔积或 {"SKU": model_id} 占位；仍公开的禁用
-  model 不能漏掉。普通选项文字是规格值，不是图片 ID。
-- SKU 图核对 model/extinfo 及实际 tier 图片映射；空字符串不是有效候选。含混时正常
-  选择规格核验，只有确认无专属图才 null，未取到不等于无图。
+  model 不能漏掉。普通选项文字是规格值，不是图片 ID。唯一例外：恰有一个真实 model、
+  恰有一层规格，且 tier 名称、唯一 option、model 名称均为空时，写
+  `{"规格":"单规格"}`；多个 model 或解析失败不得套用。
+- SKU 图先核对具体 model/extinfo 的 `sku_image/image/image_id`；仅当这些直接字段全空时，
+  才按 tier_index 使用 tier 图片。空字符串不是有效候选；同一优先级内部冲突仍停止，
+  只有确认无专属图才 null，未取到不等于无图。
 - 图库取 product_images.images 或已验证完整的 item.images；单个 item.image 不证明
-  副图完整。正常打开查看器加载剩余图，排除视频封面、评论、推荐和覆盖图。
-- URL 来自当前 DOM/页面数据中的实际完整值，用图片 ID 精确对应有序图库，不拼 CDN、
-  不删缩略后缀、不换域名凑协议。首张为主图，余图按原序去重；SKU 可共享真实映射图。
-  允许域名和 URL 形状见 capture-protocol.md。
+  副图完整。A 从完整 DOM/内嵌数据读取，不打开查看器；排除视频封面、评论、推荐和覆盖图。
+- URL 优先使用当前 DOM/页面数据中的实际完整值，并用图片 ID 精确对应有序图库。只有
+  权威图库/model/tier 字段给出图片 ID、同一完整 DOM 又没有该 ID 的绝对原图 URL 时，
+  才对这个缺失项生成 `https://down-ph.img.susercontent.com/file/<图片ID>`；不得覆盖已有
+  URL、去缩略后缀、改变顺序或给非权威字符串套域名。首张为主图，余图按原序去重；
+  SKU 可共享真实映射图。允许域名和最终 URL 形状见 capture-protocol.md。
 
 models_complete/gallery_complete 只有完整现场证据才设 true；声明和结构检查不是
 来源证明。任一未解决缺失不能发布正式部分表。
@@ -205,7 +213,8 @@ result 仅有正式表。Excel 验收只证明内部一致，必须结合本轮�
 | list_html.py | 只在内存解析列表 HTML |
 | scraper.py / capture_list_page.cjs | 业务解析与内部遗留编排；旧私有 profile 启动不是 A 接管器，公开 CLI 不调用它 |
 
-旧解析器的占位 SKU、拼 CDN、单图回退和旧标题优先级不能直接用于正式事实；
+旧解析器的无条件占位 SKU、无条件拼 CDN、单图回退和旧标题优先级不能直接用于正式事实；
+只有第 7 节定义且已绑定当前完整 DOM 的“单规格”和缺失图片 ID 兜底可以使用。
 旧历史清单入口不能替代实时列表。依赖存在、本地测试或历史成功不是本轮采集证明。
 
 2026-09-20 直接 Playwright 抽测：原 Chrome 列表第 1/27 页取得 30 个唯一商品；

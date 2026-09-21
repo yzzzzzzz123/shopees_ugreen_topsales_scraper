@@ -20,7 +20,8 @@ DOM 和商品内嵌 JSON。不是 Playwright、截图 OCR、直接 HTTP 爬虫�
 
 只做受支持的原页面读取。不得复制 Cookie/Storage/profile、启动另一个 Chrome/context/
 采集标签、搭建 CDP、修改代理/请求头/指纹、安装扩展或扩大权限。页/商品导航单路串行，
-至少间隔 10 秒；单纯读取界面不算新一次商品导航，但不得高频刷新冲击页面。
+每次导航前独立随机等待 2～3 秒，每完成 50 件额外随机冷却 3～5 分钟；单纯读取界面
+不算新一次商品导航，但不得高频刷新冲击页面。
 
 本参考约束 B；A 使用普通 Playwright。两者都不做指纹配置、地区查询或环境脚本注入，
 只沿用人工已打开的原浏览器状态。CUA 结果不得声称为 Playwright 验证结果。
@@ -116,7 +117,9 @@ script[type="text/mfe-initial-data"] 的 JSON
   不能用 URL 的单个 `display_model_id` 代表全部 SKU。
 - 用每个 model 的 `tier_index` 对应各 `tier_variations[j].options[index]`，形成规格名
   到选项的映射。核对维数、整数索引和边界；不能用选项笛卡尔积补 SKU，也不能退成
-  `{"SKU": model_id}` 冒充真实规格。页面结构不同则重新核验，不硬套该路径。
+  `{"SKU": model_id}` 冒充真实规格。仅当恰有一个真实 model、恰有一层规格，且 tier
+  名称、唯一 option、model 名称均为空时固定写 `{"规格":"单规格"}`；其他页面结构
+  不同则重新核验，不硬套该路径。
 - 旧 `scraper.py` 中 `DETAIL_PAGE_SCRIPT`、`_parse_detail` 仅可参考字段映射；不要因此
   调用旧私有浏览器启动器。其单图回退、占位规格、图片 ID 拼域名等宽松路径不能替代
   当前完整性证据。
@@ -146,13 +149,15 @@ script[type="text/mfe-initial-data"] 的 JSON
 }
 ```
 
-5. SKU 图先核对 model 或 extinfo 的真实图片字段，再按已验证的 tier_index 对应
-   `tier_variations[].images[]`。图片字段可能是空字符串：不能只用 `??`，因为 `""`
-   会阻断后续有效映射；须选实际非空且类型正确的字段，并核对与可见选项的对应关系。
-   多层规格存在多个含混的图片来源时，正常选择对应选项核验，不直接随取第一张。
-6. 图片 ID 存在却匹配不到原图 URL，表示“未取得”，不等于无图；正常展开/选择后再读。
-   只有确认该 SKU 没有专属图才可 null。禁止用商品主图替代 SKU 图、猜 CDN 前缀或用
-   历史图片补齐。主副图按图库去重，SKU 可以共享同一张真实映射图片。
+5. SKU 图先核对具体 model/extinfo 的 `sku_image/image/image_id`；这些直接字段全空时，
+   才按已验证的 tier_index 对应 `tier_variations[].images[]`。图片字段可能是空字符串：
+   不能只用 `??`，因为 `""` 会阻断后续有效映射。同一优先级内多个非空引用冲突时
+   停止核对，不跨层随取第一张。
+6. 图片 ID 存在却匹配不到原图 URL时，只要 ID 来自当前商品权威图库/model/tier 字段，
+   可仅对该缺失项生成 `https://down-ph.img.susercontent.com/file/<图片ID>` 并按
+   capture-protocol.md 重新校验；已有完整 URL 不得覆盖。只有确认该 SKU 没有专属图才
+   可 null。禁止用商品主图替代 SKU 图或用历史图片补齐。主副图按图库去重，SKU 可以
+   共享同一张真实映射图片。
 
 ## 6. 控制台结果回传：不要解析截断预览或旧结果
 
