@@ -54,6 +54,8 @@ Playwright 每轮只建立一次长连接，能力确认、列表、详情、进
   规范和其他日期结果不动，失败不覆盖有效正式结果。
 - 长期默认每完成 50 件唯一商品详情累计更新同目录 `ugreen_topsales_progress.xlsx`；
   列表完成、停止/挑战/异常和结束时补存尾批。进度表标明未完成，绝不冒充全量通过。
+  工作簿内同时保存完整恢复状态，进程重启后先恢复已采数据、只采剩余身份；沿用原日期，
+  不重新 prepare。旧版表迁移需明确授权并绑定 SHA-256，详见 Skill 第 8 节。
 - 全量准备会自动提交现有改动，并创建或更新本日 worktree，无需再次确认；采集和发布
   不以脏状态或 HEAD 不同阻断。现有结果、其他日期及历史提交保留；见 [worktree.md](skills/shopee-ugreen-topsales/references/worktree.md)。
 
@@ -74,6 +76,7 @@ Playwright 每轮只建立一次长连接，能力确认、列表、详情、进
 | `--prepare` | 委托每日目录准备器，仅创建/安全复用上海本日；可显式给同一天的 `--date YYYY-MM-DD` |
 | `--publish-stdin --project-root ROOT --worktree DAILY` | 接收现场协议的 stdin JSON 对象，确定性转换、完整性审计、原子发布 |
 | `--validate --project-root ROOT --worktree DAILY` | 对指定日期结果进行独立只读验收，不回退其他文件 |
+| `--resume-checkpoint --project-root ROOT --worktree DAILY` | 只读核验累计进度并报告可恢复计数与下一保存点；宿主用 `checkpoint_resume.load_checkpoint` 取得内存对象和待办 |
 | `--check-contract` | 只读检查 Skill 内文档及规范工作簿 schema，不是网站采集成功证明 |
 
 `ROOT`、`DAILY` 使用明确绝对路径。现场 JSON 仅内存/管道交接，不保存原始响应、

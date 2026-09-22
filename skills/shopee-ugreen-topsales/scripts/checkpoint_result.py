@@ -16,6 +16,7 @@ from zoneinfo import ZoneInfo
 from urllib.parse import quote
 from openpyxl import load_workbook
 import excel
+from checkpoint_state import embed_state, read_embedded
 from publish_result import _check_destination, _identity, _image_url, _list_url, _monthly, _object, _text, _timestamp, _safe_path, _exclusive_publish
 from validate_result import _target_workbook
 
@@ -197,6 +198,9 @@ def validate_snapshot(path, snapshot):
                 raise ValueError("外部文本不得形成公式")
             if ws["A3"].value != snapshot["status"]:
                 raise ValueError("进度状态不符")
+            if (ws["A4"].value != "启动时间：" + snapshot["started_at"]
+                    or ws["A5"].value != "保存时间：" + snapshot["saved_at"]):
+                raise ValueError("进度表启动或保存时间不一致")
             for r, row in enumerate(expected, 7):
                 for c, value in enumerate(row, 1):
                     if isinstance(value, str) and value.startswith("https://"):
@@ -226,6 +230,25 @@ def write_snapshot(payload, project_root, worktree, *, renderer=None):
     with _exclusive_publish(root):
         _check_destination(target.with_name("ugreen_topsales.xlsx"))
         _check_existing(target, snapshot)
+        origin = {"kind": "native_capture"}
+        if target.exists():
+            previous = read_embedded(target)
+            if previous is None:
+                from checkpoint_resume import LEGACY_WARNINGS
+                origin = {"kind": "legacy_predecessor", "source_sha256": hashlib.sha256(target.read_bytes()).hexdigest(),
+                          "warnings": LEGACY_WARNINGS}
+            else:
+                old = previous["payload"]
+                validate_snapshot(target, build_snapshot(old))
+                if (old["started_at"] != payload["started_at"] or old["store_url"] != payload["store_url"]
+                        or old["pages"] != payload["pages"][:len(old["pages"])]):
+                    raise ValueError("拒绝改写恢复状态中的已保存列表事实")
+                current_details = {_identity(d["product_url"]): d for d in payload["details"]}
+                if any(current_details.get(_identity(d["product_url"])) != d for d in old["details"]):
+                    raise ValueError("拒绝改写恢复状态中的完整详情")
+                if _timestamp(payload["captured_at"], "captured_at") < _timestamp(old["captured_at"], "captured_at"):
+                    raise ValueError("保存时间不得倒退")
+                origin = previous["origin"]
         target.parent.mkdir(exist_ok=True)
         descriptor, name = tempfile.mkstemp(prefix=".ugreen-progress-", suffix=".xlsx", dir=target.parent)
         os.close(descriptor)
@@ -243,6 +266,9 @@ def write_snapshot(payload, project_root, worktree, *, renderer=None):
             # artifact, so remove it before validating or publishing the Excel.
             inspect_sidecar.unlink(missing_ok=True)
             add_hyperlinks(candidate, snapshot)
+            embed_state(candidate, payload, origin)
+            if read_embedded(candidate) != {"payload": payload, "origin": origin}:
+                raise ValueError("完整恢复状态回读不一致")
             validate_snapshot(candidate, snapshot)
             with candidate.open("rb") as handle:
                 os.fsync(handle.fileno())
@@ -251,7 +277,7 @@ def write_snapshot(payload, project_root, worktree, *, renderer=None):
             candidate.unlink(missing_ok=True)
             inspect_sidecar.unlink(missing_ok=True)
     return dict(path=str(target), sha256=hashlib.sha256(target.read_bytes()).hexdigest(),
-                collection_mode=MODE, audit_status="未完成", **snapshot["counts"])
+                collection_mode=MODE, audit_status="未完成", resume_available=True, **snapshot["counts"])
 
 
 def _check_existing(target, snapshot):

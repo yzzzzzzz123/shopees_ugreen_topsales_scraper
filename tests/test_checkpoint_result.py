@@ -162,6 +162,8 @@ class SaverTests(unittest.TestCase):
                     patch.object(checkpoint_result, '_exclusive_publish', return_value=nullcontext()), \
                     patch.object(checkpoint_result.subprocess, 'run', side_effect=render), \
                     patch.object(checkpoint_result, 'add_hyperlinks'), \
+                    patch.object(checkpoint_result, 'embed_state'), \
+                    patch.object(checkpoint_result, 'read_embedded', return_value={'payload': payload(), 'origin': {'kind': 'native_capture'}}), \
                     patch.object(checkpoint_result, 'validate_snapshot'):
                 receipt = checkpoint_result.write_snapshot(payload(), root, daily)
             self.assertEqual(receipt['path'], str(result / 'ugreen_topsales_progress.xlsx'))

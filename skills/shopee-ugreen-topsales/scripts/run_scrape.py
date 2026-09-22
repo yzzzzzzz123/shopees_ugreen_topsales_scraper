@@ -38,11 +38,13 @@ def _parser() -> argparse.ArgumentParser:
     modes.add_argument("--prepare", action="store_true", help="自动提交改动并创建或更新上海本日 worktree")
     modes.add_argument("--publish-stdin", action="store_true", help="验收 stdin 现场 JSON 并原子发布四表")
     modes.add_argument("--checkpoint-stdin", action="store_true", help="保存本轮已采集数据为累计进度 Excel，不表示全量完成")
+    modes.add_argument("--resume-checkpoint", action="store_true", help="只读校验本轮进度表并报告可恢复详情/待办；不操作浏览器")
     modes.add_argument("--validate", action="store_true", help="独立只读验收明确指定的日期结果")
     modes.add_argument("--check-contract", action="store_true", help="只读检查 Skill 内文档和 Excel 内容规范")
     parser.add_argument("--project-root", type=Path, help="当前 Skill 所属主项目根目录")
     parser.add_argument("--worktree", type=Path, help="--publish-stdin/--checkpoint-stdin/--validate 的明确日期 worktree")
     parser.add_argument("--date", help="仅 --prepare 可用，YYYY-MM-DD，必须为上海本日")
+    parser.add_argument("--legacy-checkpoint-sha256", help="仅恢复旧版无内嵌状态的进度表时，绑定已审核且获准迁移的文件 SHA-256")
     return parser
 
 
@@ -99,11 +101,13 @@ def _plan(root: Path, run_date: date) -> dict:
         "checkpoint_every_details": 50,
         "checkpoint_output": str(worktree / "result/ugreen_topsales_progress.xlsx"),
         "flush_checkpoint_on_stop": True,
+        "durable_checkpoint_in_workbook": True,
+        "resume_mode": "--resume-checkpoint",
         "challenge_action": "detach_then_checkpoint_wait_for_user",
         "ordinary_error_action": "recover_automatically_without_user_confirmation",
         "required_steps": [
             "读取 Skill 内任务书、内容规范及现场数据协议，冻结上海启动日；规范只读且不是业务种子。",
-            "按 --prepare 自动提交项目改动并创建或更新本日 worktree；不以脏状态或 HEAD 不同阻断采集和发布。",
+            "新一轮按 --prepare 自动提交并准备本日 worktree；续跑先恢复原日期进度，不重新 prepare 或重抓已完成详情。",
             "宿主 Agent 读取原 Chrome 目标页，确认 PH UGREEN 与 Top Sales；Playwright 每轮只建立一次长连接，检查、采集、保存和冷却复用同一连接与原 page，不频繁重连或重复触发授权。",
             "页面后台或失焦不暂停、不因此断开；普通读页/输入超时和解析失败由宿主自动恢复，不要求用户确认，不抢回焦点。",
             "A 路线默认完整 DOM 直读，不发送鼠标移动或滚轮；导航前检查当前页，按真实 URL 导航后随机驻留，读取完整 DOM 并核验后离线解析。",
@@ -149,11 +153,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             "不再从此入口启动浏览器、复制 profile 或以历史表作种子。"
         )
     args = parser.parse_args(raw)
-    if args.publish_stdin or args.checkpoint_stdin or args.validate:
+    if args.publish_stdin or args.checkpoint_stdin or args.validate or args.resume_checkpoint:
         if args.project_root is None or args.worktree is None:
-            parser.error("--publish-stdin/--checkpoint-stdin/--validate 必须明确指定 --project-root 与 --worktree")
+            parser.error("--publish-stdin/--checkpoint-stdin/--validate/--resume-checkpoint 必须明确指定 --project-root 与 --worktree")
     elif args.worktree is not None:
-        parser.error("--worktree 仅用于 --publish-stdin、--checkpoint-stdin 或 --validate")
+        parser.error("--worktree 仅用于 --publish-stdin、--checkpoint-stdin、--validate 或 --resume-checkpoint")
+    if args.legacy_checkpoint_sha256 is not None and not args.resume_checkpoint:
+        parser.error("--legacy-checkpoint-sha256 仅用于 --resume-checkpoint")
     if args.date is not None and not args.prepare:
         parser.error("--date 仅用于 --prepare，且只允许上海本日")
 
@@ -176,6 +182,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             from checkpoint_result import write_snapshot
 
             receipt = write_snapshot(_read_capture_payload(), root, args.worktree)
+        elif args.resume_checkpoint:
+            from checkpoint_resume import load_checkpoint
+
+            restored = load_checkpoint(root, args.worktree, legacy_sha256=args.legacy_checkpoint_sha256)
+            receipt = {key: restored[key] for key in ("path", "sha256", "counts", "saved_count", "next_checkpoint_at", "origin")}
+            receipt.update(status="checkpoint_restored", started_at=restored["payload"]["started_at"],
+                           saved_at=restored["payload"]["captured_at"], browser_resumed=False)
         elif args.validate:
             from validate_result import main as validate_main
 
