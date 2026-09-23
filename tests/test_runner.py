@@ -67,7 +67,7 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(plan["maximum_interval_seconds"], 1.2)
         self.assertIs(plan["randomized_navigation_interval"], True)
         self.assertEqual(plan["batch_size"], 50)
-        self.assertEqual(plan["batch_cooldown_seconds"], {"minimum": 72, "maximum": 120})
+        self.assertEqual(plan["batch_cooldown_seconds"], {"minimum": 0, "maximum": 0})
         self.assertEqual(plan["checkpoint_every_details"], 50)
         self.assertTrue(plan["flush_checkpoint_on_stop"])
         self.assertEqual(plan["challenge_action"], "detach_then_checkpoint_wait_for_user")
