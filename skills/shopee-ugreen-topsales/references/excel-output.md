@@ -4,6 +4,9 @@
 类型约束，不读旧业务行作为本轮种子或结果。运行结果位置由 [worktree.md](worktree.md)
 限定。模板历史行数、商品、价格和采集日期都不是本轮固定值。
 
+四表验收后另输出同目录 `ugreen_topsales_analysis.pdf`，口径见 [daily-analysis.md](daily-analysis.md)。
+每日分析不改本合同列定义，不额外增加 Excel 工作表。
+
 ## 1. 工作簿结构
 
 必须恰有以下四表并保持顺序；标题为第 2 行，元数据为第 3–4 行，表头为第 6 行，

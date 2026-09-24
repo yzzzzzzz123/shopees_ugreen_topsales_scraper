@@ -278,7 +278,7 @@ def validate_template_contract(project_root: Path) -> dict:
     return {"path": str(template), "sha256": digest, "sheets": list(excel.SHEET_NAMES), "header_row": excel.HEADER_ROW}
 
 
-def _check_destination(target: Path, candidate: Path | None = None) -> None:
+def _check_destination(target: Path, candidate: Path | None = None, *, legacy_pdf_sha256: str | None = None) -> None:
     _safe_path(target)
     if target.exists() and not target.is_file():
         raise ValueError("正式结果路径不是普通文件")
@@ -291,6 +291,19 @@ def _check_destination(target: Path, candidate: Path | None = None) -> None:
             if not progress.is_file():
                 raise ValueError("进度 Excel 路径不是普通文件")
             allowed.add(progress)
+        report = _safe_path(target.with_name("ugreen_topsales_analysis.md"))
+        if report.exists():
+            if not report.is_file():
+                raise ValueError("分析 Markdown 路径不是普通文件")
+            with report.open(encoding="utf-8") as stream:
+                if stream.readline().rstrip("\r\n") != "<!-- ugreen-daily-analysis:v1 -->":
+                    raise ValueError("同名 Markdown 不是受控分析报告，保留原文件")
+            allowed.add(report)
+        pdf = _safe_path(target.with_name("ugreen_topsales_analysis.pdf"))
+        if pdf.exists():
+            from analysis_pdf import check_controlled_pdf
+            check_controlled_pdf(pdf, legacy_pdf_sha256)
+            allowed.add(pdf)
         if any(entry not in allowed for entry in target.parent.iterdir()):
             raise ValueError("result/ 含未知文件；不会自动删除或忽略")
     if candidate is not None:
@@ -346,6 +359,8 @@ def publish(payload: dict, project_root: Path, worktree: Path) -> dict:
     with _exclusive_publish(root):
         if _gates(root, daily, started) != (target, template_hash):
             raise ValueError("取得任务锁前发布前置状态发生变化")
+        from snapshot_history import preserve_previous_result
+        preserve_previous_result(root, daily)
         target.parent.mkdir(exist_ok=True)
         descriptor, name = tempfile.mkstemp(prefix=".ugreen-publish-", suffix=".xlsx", dir=target.parent)
         os.close(descriptor)

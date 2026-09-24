@@ -17,8 +17,10 @@ dist/
 .vscode/
 *.log
 
-# 抓取结果由程序生成，不纳入版本控制。
+# 仅验收后的正式 Excel / PDF 由 --archive 成对提交；进度和旧报告不提交。
 /result/*
+!/result/ugreen_topsales.xlsx
+!/result/ugreen_topsales_analysis.pdf
 
 # 每日抓取使用独立 Git worktree；目录本身不纳入主工作树状态。
 /worktrees/

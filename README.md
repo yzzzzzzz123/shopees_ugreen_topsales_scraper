@@ -11,7 +11,7 @@
 
 两条路线都不配置指纹、不注入环境修改脚本，不覆盖浏览器 UA、语言、时区或尺寸。
 默认 A；用户选择 B 或 A 工具不可用且原页正常时用 B，用户明确只用 A 时不自动切换。
-网站挑战始终交用户处理。
+网站挑战由用户处理；A 可先接管下一个已打开并指定用于采集的原标签，全部不可用才暂停。
 宿主负责原浏览器操作，公开 CLI 负责本地交接，不宣称 CLI 已自动实现两种路线。
 
 [Skill 入口与规范索引](skills/shopee-ugreen-topsales/SKILL.md) ·
@@ -22,23 +22,27 @@
 ```text
 使用 $shopee-ugreen-topsales 完整跑一遍：通过现有工具读取我原 Chrome 的 UGREEN PH 页面，
 采集本轮全店 Top Sales 列表和每个商品详情，按该 Skill 内的内容规范生成并验收当日四表 Excel。
-遇到登录或验证码，保留原页交给我处理。
+遇到验证码或访问限制，保留原页，保存后接管下一个我已打开的采集标签；全部不可用再暂停。
+只有一个采集标签时，按原逻辑断开、保存并等我处理后继续。
 ```
 
 “跑一遍”“完整走 Skill”默认就是上述全量交付。只有明确要求“抽测几页/只文字”，
 才缩小到现场字段覆盖报告；只分析既有表则不启动网页采集。
 
-默认店铺 ID `64922227`，币种 PHP。人为等待整体按原基线除以 2.5：导航前随机间隔
-0.8～1.2 秒，加载后驻留 0.8～1.6 秒；每完成 50 件详情先保存，保存成功后继续，不再额外冷却，
-普通重试退避 2/4 秒，单路串行。页面加载/解析/写表耗时、超时上限及完整性检查不缩减；
-不保证实际全程快 2.5 倍或避免验证码，调速也不解除既有验证码暂停。统一实现见
-[pacing.py](skills/shopee-ugreen-topsales/scripts/pacing.py)。
-Playwright 每轮只建立一次长连接，能力确认、列表、详情和进度保存均复用
-该连接与原 page，禁止短连检查后断开、频繁重连或反复触发远程调试授权。
+默认店铺 ID `64922227`，币种 PHP。统一按 Skill 使用导航前随机 2～3 秒、加载后驻留
+2～4 秒、普通重读退避 5/10 秒，单路串行。每完成 50 件详情保存，成功后继续，不额外冷却。
+页面加载/解析/写表耗时、超时上限及完整性检查不缩减；此节奏不保证避免验证。
+本次只整理 Skill 和执行说明，生产脚本版本保持不变；`pacing.py` / `--plan` 仍含旧节奏值，
+宿主以 Skill 第 4.5 项最终秒数执行，不重复缩放。
+Playwright 对每个已授权原 Chrome 连接只附着一次，能力确认、列表、详情和进度保存均复用
+持续连接和已绑定原标签集合，禁止短连检查后断开、频繁重连或反复触发远程调试授权。
 页面后台或失焦时，只要仍可正常读取且身份、完整性通过就继续，不因此暂停、断开或
 重连，也不自动抢回焦点。普通读页/输入超时或解析失败由宿主自动恢复，不要求用户确认。
-只有现场验证码/人工验证才通过 `CaptchaDetected` 触发断开、保存进度并通知用户，
-明确回复继续后才重新接管。`BrowserHandoff` 不再将普通异常锁为等待用户。
+宿主在单件读取层捕获现场验证/访问限制，立即停止操作该页，保存尾批后顺序接管下一张
+已绑定原标签，重做当前未完成待办。受限标签本轮不回访，不操作账号登录切换，不新建标签。
+标签数按实际可连接的用户指定页面确定，不硬编码为四页；单页或全部不可用时，沿用
+断开、保存、等待用户明确继续的流程。`BrowserHandoff` 仍是单页交接器，CLI 不自动切页；
+多标签顺序接管由宿主按 Skill 执行。普通异常在当前页有限恢复，不占用其他标签。
 原窗口、标签和登录状态全程保留。缺少 model、SKU 映射或图库证据不能用旧值补齐。
 
 ## 规范与结果分开
@@ -49,9 +53,14 @@ Playwright 每轮只建立一次长连接，能力确认、列表、详情和进
 - 现场数据协议见 [capture-protocol.md](skills/shopee-ugreen-topsales/references/capture-protocol.md)。商品链接、身份、
   排名、价格、月销、SKU 和图片均须来自本轮；完整性声明由实际页面证据支撑，
   JSON 结构检查或 URL 白名单不能独立证明网站 SKU/图库全集。
-- 唯一正式结果为 `worktrees/YYYYMMDD_ugreen_topsales/result/ugreen_topsales.xlsx`，
+- 正式 Excel 为 `worktrees/YYYYMMDD_ugreen_topsales/result/ugreen_topsales.xlsx`，
   包含 `商品汇总`、`SKU明细`、`图片明细`、`抓取核验`。日期固定为上海启动日。
   规范和其他日期结果不动，失败不覆盖有效正式结果。
+- 每日同时交付同目录 `ugreen_topsales_analysis.pdf`：逐链接月销/价格日变化、7/30 日趋势、
+  店铺新出现链接、月销与金额估算、价格段销量占比和动销。缺历史明确留空，月销滚动展示值
+  不当成当天订单，客单价只给列表价代理。详细定义见 Skill 的 `references/daily-analysis.md`。
+  正式 Excel 发布后执行主根 `run_scrape.py --analyze --project-root ROOT --worktree DAILY`（内部先独立验收源表），
+  再执行 `--validate`、`--archive`，确认分析通过及日期分支归档 commit；既有日期补分析也使用这三个入口，不重新采集。
 - 长期默认每完成 50 件唯一商品详情累计更新同目录 `ugreen_topsales_progress.xlsx`；
   列表完成、停止/挑战/异常和结束时补存尾批。进度表标明未完成，绝不冒充全量通过。
   工作簿内同时保存完整恢复状态，进程重启后先恢复已采数据、只采剩余身份；沿用原日期，
@@ -75,6 +84,8 @@ Playwright 每轮只建立一次长连接，能力确认、列表、详情和进
 | --- | --- |
 | `--prepare` | 委托每日目录准备器，仅创建/安全复用上海本日；可显式给同一天的 `--date YYYY-MM-DD` |
 | `--publish-stdin --project-root ROOT --worktree DAILY` | 接收现场协议的 stdin JSON 对象，确定性转换、完整性审计、原子发布 |
+| `--analyze --project-root ROOT --worktree DAILY` | 只读完整快照，生成同目录 PDF 分析 |
+| `--archive --project-root ROOT --worktree DAILY` | 将验收后的 Excel/PDF 成对提交到日期分支；同日历史保留在 Git |
 | `--validate --project-root ROOT --worktree DAILY` | 对指定日期结果进行独立只读验收，不回退其他文件 |
 | `--resume-checkpoint --project-root ROOT --worktree DAILY` | 只读核验累计进度并报告可恢复计数与下一保存点；宿主用 `checkpoint_resume.load_checkpoint` 取得内存对象和待办 |
 | `--check-contract` | 只读检查 Skill 内文档及规范工作簿 schema，不是网站采集成功证明 |

@@ -17,7 +17,7 @@ from pacing import PACING_SPEED_MULTIPLIER, paced_wait_seconds
 SKILL_RELATIVE = Path("skills/shopee-ugreen-topsales")
 CONTRACT_DOCUMENTS = (
     "SKILL.md", "assets/run_prompt_template.md", "references/excel-output.md",
-    "references/worktree.md", "references/capture-protocol.md",
+    "references/worktree.md", "references/capture-protocol.md", "references/daily-analysis.md",
 )
 LEGACY_OPTIONS = frozenset({
     "--verify-access", "--manual-access", "--manual-list-handoff",
@@ -40,11 +40,14 @@ def _parser() -> argparse.ArgumentParser:
     modes.add_argument("--checkpoint-stdin", action="store_true", help="保存本轮已采集数据为累计进度 Excel，不表示全量完成")
     modes.add_argument("--resume-checkpoint", action="store_true", help="只读校验本轮进度表并报告可恢复详情/待办；不操作浏览器")
     modes.add_argument("--validate", action="store_true", help="独立只读验收明确指定的日期结果")
+    modes.add_argument("--analyze", action="store_true", help="读取完整正式快照及历史，生成每日 PDF 分析报告")
+    modes.add_argument("--archive", action="store_true", help="验收 Excel 和 PDF 后成对提交到日期分支，不推送远程")
     modes.add_argument("--check-contract", action="store_true", help="只读检查 Skill 内文档和 Excel 内容规范")
     parser.add_argument("--project-root", type=Path, help="当前 Skill 所属主项目根目录")
     parser.add_argument("--worktree", type=Path, help="--publish-stdin/--checkpoint-stdin/--validate 的明确日期 worktree")
     parser.add_argument("--date", help="仅 --prepare 可用，YYYY-MM-DD，必须为上海本日")
     parser.add_argument("--legacy-checkpoint-sha256", help="仅恢复旧版无内嵌状态的进度表时，绑定已审核且获准迁移的文件 SHA-256")
+    parser.add_argument("--legacy-pdf-sha256", help="仅 --analyze 显式迁移一次性旧 PDF 时，绑定该文件 SHA-256")
     return parser
 
 
@@ -89,6 +92,9 @@ def _plan(root: Path, run_date: date) -> dict:
         "branch": f"daily/{compact}-ugreen-topsales",
         "worktree": str(worktree),
         "expected_output": str(worktree / "result/ugreen_topsales.xlsx"),
+        "analysis_output": str(worktree / "result/ugreen_topsales_analysis.pdf"),
+        "history_storage": "date_branch_git_commits",
+        "archive_mode": "--archive",
         "store_url": "https://shopee.ph/ugreen.ph?page=0&sortBy=sales&tab=0",
         "shop_id": "64922227",
         "currency": "PHP",
@@ -117,7 +123,8 @@ def _plan(root: Path, run_date: date) -> dict:
             "详情阶段每完成 50 个商品累计保存进度 Excel，保存成功后继续，不额外冷却；停止和结束时保存不足 50 件的尾批。",
             "只有现场验证码/人工验证才立即断开、保存并交用户；普通超时自动恢复续跑，不把工具时限当验证码，不绕过登录/访问限制。",
             "将完整现场数据按 references/capture-protocol.md 通过 stdin JSON 交给 --publish-stdin；不落盘原始数据。",
-            "独立执行 --validate，核对四表与抓取核验；全部通过后才交付日期 Excel。",
+            "执行 --analyze；分析器先独立重开验收完整 Excel，再读取合格历史，生成同目录 PDF。缺历史不伪造日环比或趋势。",
+            "独立执行 --validate，核对四表和 PDF 与源表一致，再 --archive 将两份正式产物成对提交到日期分支；不提交进度表，不推送。同日替换前先归档上一对完整产物。",
         ],
         "full_crawl_completed": False,
         "workbook_written": False,
@@ -153,11 +160,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             "不再从此入口启动浏览器、复制 profile 或以历史表作种子。"
         )
     args = parser.parse_args(raw)
-    if args.publish_stdin or args.checkpoint_stdin or args.validate or args.resume_checkpoint:
+    if args.publish_stdin or args.checkpoint_stdin or args.validate or args.resume_checkpoint or args.analyze or args.archive:
         if args.project_root is None or args.worktree is None:
-            parser.error("--publish-stdin/--checkpoint-stdin/--validate/--resume-checkpoint 必须明确指定 --project-root 与 --worktree")
+            parser.error("--publish-stdin/--checkpoint-stdin/--validate/--resume-checkpoint/--analyze/--archive 必须明确指定 --project-root 与 --worktree")
     elif args.worktree is not None:
-        parser.error("--worktree 仅用于 --publish-stdin、--checkpoint-stdin、--validate 或 --resume-checkpoint")
+        parser.error("--worktree 仅用于 --publish-stdin、--checkpoint-stdin、--validate、--resume-checkpoint、--analyze 或 --archive")
+    if args.legacy_pdf_sha256 is not None and not args.analyze:
+        parser.error("--legacy-pdf-sha256 仅用于 --analyze")
     if args.legacy_checkpoint_sha256 is not None and not args.resume_checkpoint:
         parser.error("--legacy-checkpoint-sha256 仅用于 --resume-checkpoint")
     if args.date is not None and not args.prepare:
@@ -189,6 +198,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             receipt = {key: restored[key] for key in ("path", "sha256", "counts", "saved_count", "next_checkpoint_at", "origin")}
             receipt.update(status="checkpoint_restored", started_at=restored["payload"]["started_at"],
                            saved_at=restored["payload"]["captured_at"], browser_resumed=False)
+        elif args.analyze:
+            from analysis_report import write_report
+
+            receipt = (write_report(root, args.worktree, legacy_pdf_sha256=args.legacy_pdf_sha256)
+                       if args.legacy_pdf_sha256 else write_report(root, args.worktree))
+        elif args.archive:
+            from snapshot_history import archive_result
+            receipt = archive_result(root, args.worktree)
         elif args.validate:
             from validate_result import main as validate_main
 

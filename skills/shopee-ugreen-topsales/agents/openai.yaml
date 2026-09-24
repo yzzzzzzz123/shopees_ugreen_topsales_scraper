@@ -1,4 +1,4 @@
 interface:
-  display_name: "UGREEN Top Sales 全量采集"
-  short_description: "用原 Chrome 现场采集全店列表与详情，按内容规范发布并独立验收四表 Excel"
-  default_prompt: "使用 $shopee-ugreen-topsales，通过现有工具读取我原 Chrome 的 UGREEN PH 页面，完整采集本轮全店 Top Sales 列表和每个商品详情，按该 Skill 内的内容规范生成并验收当日四表 Excel；遇到登录或验证码保留原页交给我。"
+  display_name: "UGREEN 全量采集与每日分析"
+  short_description: "用原 Chrome 采集全店列表与详情，交付四表 Excel 和月销价格趋势 PDF 日报"
+  default_prompt: "使用 $shopee-ugreen-topsales，接管原 Chrome 完整采集 UGREEN PH 全店 Top Sales，生成并验收四表 Excel 与每日 PDF 分析，覆盖月销和价格变化、7/30日趋势、上新观察、价格段与动销；遇到实际验证保留原页交给我。"

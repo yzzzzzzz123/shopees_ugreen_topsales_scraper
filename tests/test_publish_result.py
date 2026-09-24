@@ -182,6 +182,8 @@ class PublishTests(unittest.TestCase):
         source.parent.mkdir(parents=True)
         shutil.copyfile(SCRIPTS / "publish_result.py", source)
         self.git(self.root, "init", "-b", "main")
+        self.git(self.root, "config", "user.name", "Offline Fixture")
+        self.git(self.root, "config", "user.email", "offline@example.invalid")
         self.git(self.root, "add", ".")
         self.git(self.root, "-c", "user.name=Offline Fixture", "-c", "user.email=offline@example.invalid", "commit", "-m", "offline fixture")
         self.git(self.root, "worktree", "add", "-b", "daily/20000102-ugreen-topsales", str(self.daily), "HEAD")
@@ -237,6 +239,26 @@ class PublishTests(unittest.TestCase):
         receipt = self.publish(value)
         self.assertEqual(receipt["list_page_count"], 2)
         self.assertEqual(receipt["product_count"], 31)
+
+    def test_daily_report_coexists_and_republication_requires_regeneration(self):
+        import analysis_report
+        import validate_result
+
+        self.publish()
+        report = analysis_report.write_report(self.root,self.daily)
+        self.assertEqual(report["analysis_status"],"通过")
+        out,err=io.StringIO(),io.StringIO()
+        with redirect_stdout(out),redirect_stderr(err):
+            code=validate_result.main(["--project-root",str(self.root),"--worktree",str(self.daily)])
+        self.assertEqual(code,0,err.getvalue())
+        self.assertEqual(json.loads(out.getvalue())["analysis"]["analysis_status"],"通过")
+        updated=fixture()
+        updated["pages"][0]["cards"][0]["price_php"]=20
+        self.publish(updated)
+        with self.assertRaisesRegex(ValueError,"不一致"):
+            analysis_report.validate_report(self.root,self.daily)
+        analysis_report.write_report(self.root,self.daily)
+        self.assertEqual(analysis_report.validate_report(self.root,self.daily)["analysis_status"],"通过")
 
     def test_template_contract_reads_only_schema(self):
         receipt = publisher.validate_template_contract(self.root)

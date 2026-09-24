@@ -178,6 +178,13 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual((code, output), (2, ""))
         validate.assert_called_once_with(["--project-root", str(self.root), "--worktree", str(self.daily)])
 
+    def test_analyze_reads_existing_snapshots_without_browser_or_capture_payload(self):
+        analyze = Mock(return_value={"analysis_status":"通过","history_days":1})
+        code, output, errors = self.invoke(*self.bound_options("--analyze"), modules={"analysis_report":SimpleNamespace(write_report=analyze)})
+        self.assertEqual((code,errors),(0,""))
+        analyze.assert_called_once_with(self.root,self.daily)
+        self.assertEqual(json.loads(output)["history_days"],1)
+
     def test_check_contract_uses_shared_read_only_schema_validator(self):
         check = Mock(return_value={"path": str(self.skill / "assets/ugreen_topsales.xlsx"), "sha256": "fixture"})
         code, output, _ = self.invoke("--check-contract", modules={"publish_result": SimpleNamespace(validate_template_contract=check)})
@@ -195,7 +202,7 @@ class RunnerTests(unittest.TestCase):
         self.assertIn("表头不匹配", errors)
 
     def test_argument_errors_precede_root_binding_or_actions(self):
-        cases = (["--publish-stdin"], ["--validate"], ["--validate", "--worktree", str(self.daily)],
+        cases = (["--publish-stdin"], ["--validate"], ["--analyze"], ["--validate", "--worktree", str(self.daily)],
                  ["--publish-stdin", "--project-root", str(self.root)], ["--plan", "--prepare"],
                  ["--worktree", str(self.daily)], ["--date", "2026-09-20"], ["--pub"])
         for options in cases:

@@ -81,11 +81,26 @@ def main(argv: list[str] | None = None) -> int:
         allowed = {target.name}
         if progress.is_file():
             allowed.add(progress.name)
+        report = target.with_name("ugreen_topsales_analysis.pdf")
+        if report.is_symlink() or (report.exists() and not report.is_file()):
+            raise ValueError("分析 PDF 路径不是普通文件")
+        if report.is_file():
+            allowed.add(report.name)
+        legacy = target.with_name("ugreen_topsales_analysis.md")
+        if legacy.exists() or legacy.is_symlink():
+            if legacy.is_symlink() or not legacy.is_file() or not legacy.read_text(encoding="utf-8").startswith("<!-- ugreen-daily-analysis:v1 -->\n"):
+                raise ValueError("同名旧 Markdown 不是受控历史报告，保留原文件")
+            allowed.add(legacy.name)
         if set(entries) != allowed:
             raise ValueError(
-                f"result/ 只能包含 {target.name} 及可选的 {progress.name}；当前为 {entries}"
+                f"result/ 只能包含 {target.name}、规定的分析 PDF、兼容旧 Markdown 及可选的 {progress.name}；当前为 {entries}"
             )
         stats = validate_excel(target)
+        analysis = None
+        if report.is_file():
+            from analysis_report import validate_report
+
+            analysis = validate_report(args.project_root, args.worktree)
     except (OSError, ValueError, WorktreeError) as exc:
         print(f"错误：{exc}", file=sys.stderr)
         return 2
@@ -102,6 +117,7 @@ def main(argv: list[str] | None = None) -> int:
                 "main_image_count": stats.main_image_count,
                 "secondary_image_count": stats.secondary_image_count,
                 "audit_status": stats.audit_status,
+                **({"analysis": analysis} if analysis is not None else {}),
             },
             ensure_ascii=False,
         )

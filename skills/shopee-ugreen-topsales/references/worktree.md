@@ -11,13 +11,15 @@
 | 日期目录 | `worktrees/YYYYMMDD_ugreen_topsales` |
 | 日期分支 | `daily/YYYYMMDD-ugreen-topsales` |
 | 正式结果 | 该日期目录下 `result/ugreen_topsales.xlsx` |
+| 每日分析 | 同目录 `ugreen_topsales_analysis.pdf`，与正式 Excel 一起交付 |
 | 累计进度 | 同目录 `result/ugreen_topsales_progress.xlsx`；每 50 件及停止尾批保存 |
 | 规范工作簿 | 主根与日期快照中的 `skills/shopee-ugreen-topsales/assets/ugreen_topsales.xlsx`，均只读且哈希一致 |
 | 执行源码 | 发布时必须调用目标日期目录内的 `skills/shopee-ugreen-topsales/scripts/run_scrape.py` |
 | Python | 使用 `--prepare` 回执中的 `python`，当前实现为主根 `.venv/bin/python` |
 
 不生成 `run-001` 等序号，不把输出写回主根 `result/`，不使用当前工作目录猜结果路径。
-跨午夜继续原日期身份；新的任务才重新绑定上海日期。仅只读历史验收可明确选择旧日期。
+跨午夜继续原日期身份；新的任务才重新绑定上海日期。历史验收或用户要求补分析可明确选择旧日期；
+补分析只用主根新入口写该日规定 PDF，不改历史源码和 Excel。
 
 ## 2. 固定目录树
 
@@ -47,12 +49,13 @@ shopees_ugreen_topsales_scraper/
         ├── skills/shopee-ugreen-topsales/ # 准备时自动更新的完整 Skill；采集中规范只读
         ├── …                            # 其余已跟踪源文件按 Git 快照保留
         └── result/
-            ├── ugreen_topsales.xlsx      # 唯一全量正式交付文件，Git ignored
+            ├── ugreen_topsales.xlsx      # 该日最新完整 Excel，随日期分支提交
+            ├── ugreen_topsales_analysis.pdf # 每日 PDF，与 Excel 成对提交及交付
             └── ugreen_topsales_progress.xlsx # 累计进度，不冒充全量通过
 ```
 
 日期快照完整保留已跟踪源码；上图不是允许删除其他源码的白名单。运行产物则严格只有
-上述正式/累计进度 Excel。不生成任务书副本、原始 HTML/JSON、截图、响应、trace、manifest、
+上述正式/累计进度 Excel 和分析 PDF。不生成任务书副本、原始 HTML/JSON、截图、响应、trace、manifest、
 会话资料或 token 文件。本次任务参数绑定在宿主上下文，不改写快照中的任务书。
 
 ## 3. 自动准备与提交
@@ -74,9 +77,10 @@ shopees_ugreen_topsales_scraper/
 
 ## 4. 并发与发布
 
-宿主仅运行一个全量任务，列表和详情均串行；每次页/商品导航前独立随机等待 0.4～0.6 秒，
-每完成 50 件累计保存进度，保存成功后继续，不额外冷却；所有人为等待为最初基线的 20%（5 倍速），
-详见主 Skill 第 4.5 项。使用最终秒数，不再套用旧 2.5 倍换算。
+宿主仅运行一个全量任务，列表和详情均串行；每次页/商品导航前随机等待 2～3 秒，
+加载后驻留 2～4 秒，普通重读退避 5/10 秒。每完成 50 件累计保存，成功后继续，不额外冷却。
+详见主 Skill 第 4.5 项；宿主直接使用最终秒数，不套用现有脚本中的旧倍率。
+多标签仅顺序接管，同一时刻只操作一个已绑定原标签，不增加并发任务或分拆工作簿。
 页面自身加载耗时可额外增加实际间隔。确定性脚本分别
 用 `.git/ugreen_daily.lock` 保护准备、`.git/ugreen_daily_run.lock` 保护发布；这些是控制锁，
 不是结果或业务数据。当前锁并不覆盖宿主浏览器取数全过程，因此不能宣称已实现跨宿主
@@ -86,9 +90,11 @@ shopees_ugreen_topsales_scraper/
 并在发布前再次复核。发布模块只在目标 `result/` 创建自身唯一临时候选 `.xlsx`，完整重开校验后原子
 替换正式文件；退出时清理该候选。发布期间的受控临时文件不是额外交付物。
 
-- 同日完整重跑可以在全部验收后替换同日结果；不修改其他日期，也不改规范工作簿。
+- 同日完整重跑在全部验收后替换同日结果；替换前先将上一对完整 Excel/PDF 提交到日期分支，旧版本通过 Git 历史保留。不修改其他日期，也不改规范工作簿。
 - 发布前失败保留已有正式文件；不能把它当作失败本轮的新结果交付。
 - `result/` 有未知文件时拒绝；不自动清除或扩大忽略列表。
+- `ugreen_topsales_analysis.pdf` 是明确允许的分析产物。分析器与 Excel 共用锁，PDF 候选回读后原子替换；
+  未知同名文件不覆盖。同日重新发布 Excel 后重新运行 `--analyze`，再 `--validate` 复算报告。
 - `ugreen_topsales_progress.xlsx` 是明确允许的累计进度文件，不当作未知文件或正式结果。
   进度保存由主根新入口执行，只核对注册归属、启动日、路径和字段，允许主根维护脏状态时
   先保全已采集数据；保存和发布不因 Git 改动暂停，也不在运行中同步日期源码。
@@ -98,13 +104,21 @@ shopees_ugreen_topsales_scraper/
 
 ## 5. 完成与中断
 
-正式结果在 ignored `result/`，不纳入自动提交。用明确的根和日期参数
+正式 Excel 和 PDF 在 `result/`，最终 `--archive` 验收后成对提交到日期分支；其他结果仍忽略。用明确的根和日期参数
 独立验收，不回退主根、规范表或另一日期。回执走 stdout，不另写 JSON 文件。
 
-只有现场验证码/人工验证才立即断开并保留原页面，再保存已有数据及不足 50 件尾批；
-用户明确回复继续后才重新附着、重读身份和字段。宿主内存丢失时，先按 Skill 第 8 节
+A 的原标签出现实际验证/访问限制时立即停止操作该页，保存尾批后顺序接管下一个已绑定原标签；
+单页、全部不可用或用户停止时，先断开、保留原页，再保存已有数据及不足 50 件尾批。
+受限页不轮询或自动回访；全部暂停后用户明确继续才重新附着、重读身份和字段。宿主内存丢失时，先按 Skill 第 8 节
 恢复本轮 `ugreen_topsales_progress.xlsx` 内的完整恢复部件，沿用原日期与启动时间，
 不重新 prepare、不自动重抓已保存详情。无部件的旧版表须经明确授权并绑定审核后的
 SHA-256 才能迁移；来源不明或无法安全恢复时保留原文件并报告具体缺口。
 不借其他轮次 Excel、日志或历史访问记录补造数据。普通超时或加载错误按 Skill 第 4 节
 自动恢复，不要求用户回复继续；已持久化断点不包含保存后尚未落盘的数据。
+
+
+## 6. 历史版本归档
+
+完成顺序是 `--publish-stdin` → `--analyze` → `--validate` → `--archive`。最后一步只暂存和提交 `result/ugreen_topsales.xlsx` 与 `result/ugreen_topsales_analysis.pdf`，并回读 Git 中的字节核对两个 SHA-256。提交信息使用业务日、实际采集时间和产物指纹生成具体中文说明；无变化不空提交。已有其他暂存改动保留，不混入快照提交。
+
+`worktrees/` 在主分支继续忽略，因为各日期目录是独立分支的工作区。结果由各自日期分支管理，主分支不再复制一份。旧日期的忽略规则无需改源码，`--archive` 对明确的两个正式路径定向添加；不提交进度或旧 Markdown。详细历史选择、缺日和 Git 回读规则见 [每日分析合同](daily-analysis.md#历史快照保存与读取)。

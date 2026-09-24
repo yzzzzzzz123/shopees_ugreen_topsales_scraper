@@ -1,6 +1,6 @@
 ---
 name: shopee-ugreen-topsales
-description: 接管人工已打开的原 Chrome，采集 PH UGREEN 全店 Top Sales 列表与商品详情，在日期 Git worktree 发布并验收四表 Excel。A 使用普通 Playwright，B 使用电脑操作 CUA；也支持明确限定的抽测或既有表分析。
+description: 接管人工已打开的原 Chrome，采集 PH UGREEN 全店 Top Sales，在日期 Git worktree 发布四表 Excel 和每日 PDF 分析，覆盖月销/价格变化、7/30日趋势、新出现链接、价格段与动销。A 使用普通 Playwright，B 使用电脑操作 CUA；也支持抽测或既有表分析。
 ---
 
 # Shopee UGREEN Top Sales
@@ -19,15 +19,16 @@ description: 接管人工已打开的原 Chrome，采集 PH UGREEN 全店 Top Sa
 读取 DOM/当前商品 JSON 的只读表达式是取数，不是修改浏览器环境。
 
 不复制 Cookie/Storage/profile，不启动替代 Chrome/context/采集标签，不重启 Chrome，
-不擅自开放调试端口、安装扩展或修改系统代理。只有现场验证码/人工验证才立即断开、
-保留原页交用户，并等用户明确继续后重新验收。普通超时、加载或解析失败由宿主自动
+不擅自开放调试端口、安装扩展或修改系统代理。按用户 2026-09-23 的要求，A 绑定已打开且
+指定用于采集的原标签集合；某页风控后保留原页，保存并接管下一个原标签，不操作账号登录切换。
+单页或全部不可用时立即断开、保存并等用户明确继续后重新验收。普通超时、加载或解析失败由宿主自动
 诊断恢复，不要求用户回复“继续”；不将工具时限或 Page Unavailable 冒充验证码。
 
 ```text
 读规范与参数 → 全量任务准备日期 worktree
   → A 普通 Playwright / B 电脑操作 CUA：接管原 Chrome
   → 全部列表 → 全部唯一详情（每 50 件保存累计进度 Excel，停止时补存尾批）→ 内存载荷
-  → stdin 严格发布 → 独立验收 → 唯一四表 Excel
+  → stdin 严格发布 → Excel 独立验收 → 每日分析 → 报告验收 → 四表 Excel + PDF
 ```
 
 ## 2. 范围和规范入口
@@ -37,9 +38,9 @@ description: 接管人工已打开的原 Chrome，采集 PH UGREEN 全店 Top Sa
 
 | 用户请求 | 执行范围 |
 | --- | --- |
-| 跑一遍、完整执行、刷新全店 | 本轮全部列表、全部唯一详情、完整四表与独立验收 |
+| 跑一遍、完整执行、刷新全店 | 本轮全部列表、全部唯一详情、完整四表、每日 PDF 分析与独立验收 |
 | 明确抽测几页/几件、试字段、只文字 | 按约定数量；没给数量则少量代表性样本，不创建 worktree、不发布部分表 |
-| 分析既有 Excel | 只读指定文件，不自动访问网页或修改文件 |
+| 分析既有 Excel | 只读指定源表和合格历史；要求输出时生成指定日期分析 PDF，不访问网页或改写源表 |
 | 整理 Skill、解释脚本 | 仅维护/解释，不因此启动采集或创建日期运行 |
 
 先完整读取 [标准任务书](assets/run_prompt_template.md)，再按任务读取：
@@ -49,6 +50,7 @@ description: 接管人工已打开的原 Chrome，采集 PH UGREEN 全店 Top Sa
 | [worktree.md](references/worktree.md) | 全量必读：日期身份、Git 边界、目录和生命周期 |
 | [capture-protocol.md](references/capture-protocol.md) | 全量和抽测必读：现场字段、类型和内存交接 |
 | [excel-output.md](references/excel-output.md) | 全量和抽测必读：四表逐列口径及 17 项验收 |
+| [daily-analysis.md](references/daily-analysis.md) | 全量交付/既有表分析必读：每日变化、7/30 日趋势、新出现链接、金额代理、价格段与动销 |
 | [cua-fallback.md](references/cua-fallback.md) | 使用 B 前必读：DevTools 只读采集、分块回传和验收 |
 | [ugreen_topsales.xlsx](assets/ugreen_topsales.xlsx) | 只读内容规范，不是业务数据种子 |
 | [verified_access.md](references/verified_access.md) | 已发生的验证与历史证据，不覆盖当前流程 |
@@ -75,7 +77,8 @@ project_root/worktree/branch/python/runner/output/source_head/worktree_head。
 不以脏状态或 HEAD 不同阻断采集和发布；日期分支保持正确，Python 来自主根，发布 runner 来自
 目标日期目录。prepare 后沿用启动日，跨午夜不重建另一轮身份。
 
-正式结果：`worktrees/YYYYMMDD_ugreen_topsales/result/ugreen_topsales.xlsx`。
+正式结果：`worktrees/YYYYMMDD_ugreen_topsales/result/ugreen_topsales.xlsx`，
+以及同目录 `ugreen_topsales_analysis.pdf` 每日分析报告。
 采集中累计进度表：同目录 `ugreen_topsales_progress.xlsx`，与全量正式结果区分。
 日期工作区包含完整 Skill/源码；任务准备自动提交主项目和本日工作区的现有改动，
 再快进或正常合并主项目版本，不重复请求授权。模板、规范在采集中只读；保留已有
@@ -84,31 +87,35 @@ project_root/worktree/branch/python/runner/output/source_head/worktree_head。
 
 ## 4. S2-A：普通 Playwright 接管原 Chrome
 
-1. 阅读当前可用的 Playwright Skill/工具文档，定位用户给定 URL 的原标签，确认唯一性、
-   店铺身份、Top Sales 和当前页。不能盲用 contexts[0].pages[0] 或操作无关账号标签。
+1. 阅读当前可用的 Playwright Skill/工具文档，定位用户指定用于采集的已打开原标签，
+   按稳定顺序绑定唯一页面对象集合，核对店铺身份、Top Sales 和当前页；只有一页也适用。
+   不盲用 contexts[0].pages[0]，不将空白页、无关店铺或账号管理页纳入。只读 URL 枚举不是
+   页面可用性证明；每次接管候选页仍先检查当前 URL/DOM。不得自动扩充集合或新建页面。
 2. 使用已有原会话连接能力，不调用 launch、launch_persistent_context、new_context
    或新建采集页。连接不可用时报告具体缺口；需用户开启调试/授权时交用户，不自行改设置。
    只允许持续长连接：同一轮初始化、能力检查、列表与详情采集和进度保存
-   复用同一附着连接和已绑定的原 `page`。检查成功后直接沿用，不做“短连检查即断开”，
+   复用持续附着连接和已绑定原标签，同一时刻只操作其中一页。检查成功后直接沿用，不做“短连检查即断开”，
    不按工具调用、页面或批次重建 Playwright，不因保存或失焦重连。远程调试已经
-   允许后不重复点击或触发授权；仅结束、用户停止、验证码交接或连接实际损坏时释放。
+   允许后不重复点击或触发授权；仅结束、用户停止、全部标签不可用或连接实际损坏时释放。
+   已打开的其他 Chrome 窗口若不在当前连接内，只能使用其已有且已获授权的连接地址；
+   看不到就如实报告，不自动开放端口、读取 profile 或声称已接管所有窗口。
 3. 本机 Python Playwright 1.63.0 已验证可用
    `chromium.connect_over_cdp("chrome", no_defaults=True)` 附着用户已开启远程调试的 Chrome。
    no_defaults 避免默认上下文覆盖；不额外设置浏览器环境或 init script。
    它不是所有机器的通用保证，也不证明此前外部修改已恢复。
 4. **默认完整 DOM 直读，不发送鼠标移动或滚轮。** 这是用户在 2026-09-22 确认沿用的
-   现场办法，不必先尝试旧滚轮路线或等它超时才直读。每次导航前随机等待 0.4～0.6 秒，
+   现场办法，不必先尝试旧滚轮路线或等它超时才直读。每次导航前随机等待 2～3 秒，
    读取当前完整 DOM 并执行 `check_html(html,page.url)`，确认没有验证页且身份正常后，
    才按本轮真实链接 `page.goto(url, wait_until="domcontentloaded", timeout=30000)`。
-   导航后随机驻留 0.4～0.8 秒，再 `page.content()` 取得完整 DOM；先检查实际 URL、
+   导航后随机驻留 2～4 秒，再 `page.content()` 取得完整 DOM；先检查实际 URL、
    挑战和页面完整性，再将这次 DOM 交给离线解析器。详情需核对 shop/item、当前 PDP、
    全部 model 和图库，不因直读省略验收；导航前的 DOM 不作下一件商品的数据。
    DOM 单次读取上限沿用现场 20 秒，导航自身上限 30 秒（宿主外层保护 35 秒）；
    记录超时发生的具体操作，按第 7 项恢复。不要给整段采集或写表套 20/35 秒总时限。
-   驻留示例：`time.sleep(rng.uniform(0.4, 0.8))`，使用最终秒数、不再缩放，随后完整读页与检查；
+   驻留示例：`time.sleep(rng.uniform(2, 4))`，使用最终秒数、不再缩放，随后完整读页与检查；
    所有取数仅留内存。当前已验证的宿主长进程可跨工具调用保留 pages/details/待办与保存器，
    后续轮询只查看宿主进度，不因此重连、重新导航或重复读取网页。
-   页面后台或 `hasFocus=false` 本身不是暂停条件，也不切换标签或抢回焦点；仅在诊断
+   页面后台或 `hasFocus=false` 本身不是暂停条件，也不因此切换标签或抢回焦点；仅在诊断
    必要时通过 `evaluate` 只读 `document.visibilityState/document.hasFocus()`。
    [page_browse.py](scripts/page_browse.py) 的 `read_page_after_browsing` 保留为显式滚轮浏览
    的可选辅助函数，不属于默认采集步骤。需要使用时先核对原页内容视口落点，事件返回
@@ -116,40 +123,56 @@ project_root/worktree/branch/python/runner/output/source_head/worktree_head。
    不以 locator/click/evaluate 打开图库、选择规格或逐项读取，不执行 JS 滚动或环境注入；
    不读取 Cookie/密码/Storage、整份账号状态或隐藏网络接口。
    结束只断开附着连接，不关闭用户 page/context/Chrome。
-5. 用户在 2026-09-22 指定将当前 2.5 倍速再翻一倍：所有人为等待改为最初基线的 20%
-   （整体 5 倍速），即上一版等待的一半，不是仅加速导航。
-   单路串行；每次页/商品导航前独立随机取 0.4～0.6 秒间隔，每完成 50 件累计保存进度，
+5. 统一采用完整 DOM 直读、单路串行：导航前随机 2～3 秒，加载后驻留 2～4 秒，
+   普通重读退避 5/10 秒。以上均为最终秒数，由宿主直接使用，不重复缩放。
+   每完成 50 件累计保存进度，
    保存成功后继续，不再额外冷却。用户在 2026-09-22 后续要求取消每 50 件暂停，保存频率不变。
-   导航后驻留 0.4～0.8 秒，普通加载重试最初 5/10 秒退避改为 1/2 秒。
-   此前 5 倍调速按用户要求只改规范、不改脚本、不运行测试；当时新倍率尚未现场验证。
-   [pacing.py](scripts/pacing.py) 的 `paced_wait_seconds` 仍是旧的除以 2.5 实现，不代表本节的
-   5 倍规则已在脚本中生效。后续宿主直接使用本节最终秒数，或将最初基线只除以 5 一次；
-   不把最终秒数再传入旧换算函数，不重复除以倍率。默认仍不操作滚轮；若显式启用可选滚轮，
-   其内部人为等待也须符合本节，不原样套用旧 2.5 倍实现后声称已达到新倍率。
+   旧 2.5/5 倍执行规则已替换。本次按用户要求只整理 Skill 和配套执行说明，不修改生产脚本；
+   [pacing.py](scripts/pacing.py) 和 `--plan` 的节奏元数据仍为旧值，不能据此覆盖本节。
+   不把上述最终秒数传入旧缩放函数。默认不操作滚轮；可选滚轮的旧内部等待也不代表本节节奏。
+   多标签不增加并发，不因接管下一页减少等待或重置恢复预算。
    加载/操作超时上限、重试次数、每 50 件保存及所有身份/完整性检查不缩减。
-   页面实际加载、解析、写表时间不能按倍率压缩，不能宣称全程必然快 5 倍或免验证码。
-   核对内容实际更新。发现挑战按下一项立即断开交用户，不循环刷新、切身份/代理或切工具
-   绕过人工验证；调速不解除既有验证码暂停，仍须用户明确继续后才重新附着。
-6. 按第 8 节绑定累计保存器后，附着成功时绑定
-   `control = BrowserHandoff(pw.stop, on_handoff=lambda: saver.maybe_save(force=True))`，
-   用 `control.run(采集函数, …)`
-   包住导航、DOM 读取与检查、离线验收及外层采集循环。URL/DOM 检查只有实际检测到
-   验证码/人工验证才抛 `page_browse.CaptchaDetected`；该异常先断开再保存并交用户，
-   不等批次结束或截图。用户主动停止也释放连接。普通异常直接传给宿主恢复，
-   不断开、不锁定 `waiting_for_user`，不要求用户确认；单独失焦不算异常。
-   回调只用当前附着的 `pw.stop()`，不用 `browser/context/page.close()`，保留原页和内存数据。
-   控制器随即锁定等待用户，禁止后续采集；先执行断开，再离线保存已取得数据。
+   该节奏是保守的实测选择，尚无足够对照证明最优吞吐或最低验证率，不承诺免验证码。
+   调速不解除全部标签不可用后的暂停，仍须用户明确继续后才重新附着。
+6. 宿主按用户指定的原标签集合维护内存状态 `ready / blocked / closed`，同时只接管一页。
+   集合大小按实际已打开且可连接的标签数，不硬编码为 4；四页时按本规则依次接管，
+   一页时保持原交接。当前有明确正常的目标页时优先从该页开始，再沿绑定顺序使用其余页。
+   账号名称不参与选择，不读取、核实或更改 Google/Shopee 登录身份。
+   按第 8 节绑定保存器后，外层继续使用原有交接器：
+
+   ```python
+   control = BrowserHandoff(pw.stop, on_handoff=lambda: saver.maybe_save(force=True))
+   control.run(采集循环)
+   ```
+
+   多标签顺序接管由宿主的**单件读取层**负责，生产 CLI 和现有 `BrowserHandoff` 不自动枚举或
+   切页。捕获单件的挑战后，先检查是否还有候选；有候选时在外层交接器收到异常之前处理，
+   无候选才将异常继续抛给外层，避免第一张受限页就断开整条连接。
+   单件函数先检查当前页，再导航、有限恢复、完整验收；仅成功返回后提交记录与推进保存计数。
+   URL/DOM 只有实际验证码/人工验证/访问限制才抛 `page_browse.CaptchaDetected`。
+   当前页立即停止操作并标记 blocked，保存尾批成功后，顺序接管下一个已绑定原标签；
+   先核验该页再进入当前待办，同轮按身份求差续采，不重抓已完成详情、不重置普通重试预算。
+   不点击浏览器账号、不读取账号凭据、不登录退出、不切代理、不新建页、不自动解验证码。
+   同一标签受限后本轮不再回访、读取或刷新，也不因它自行恢复自动启用；不循环到第一页。
+   原标签已关闭可标记 closed 并跳过，不能把关闭或普通加载错误说成风控。
+   因关闭而无可用候选时，宿主显式断开、保存并停止，报告关闭原因，不伪抛挑战异常。
+   只有一页或全部候选不可用时，沿用 `BrowserHandoff` 先断开、保存再交用户；用户主动
+   停止也立即释放。普通异常仍在当前页有限恢复，不切页、不锁定 `waiting_for_user`。
+   切页前保存失败由宿主显式断开并锁定停止状态，保留内存和上一份有效表，不访问下一页；
+   不能仅抛出普通保存异常后又自动恢复采集。
+   断开回调只释放本采集器持有的附着连接（同一个 Playwright 为 `pw.stop()`），
+   不用 `browser/context/page.close()`，保留原页。全部停止后锁定等待用户。
    断开失败须报“连接状态未确认”，不能宣称已脱离；仍尝试保存数据，不因断连异常丢弃尾批。
    等待期间不读取/轮询页面、不自动重连；验证码消失或计时结束都不是续跑信号。
-   只有用户明确回复继续后才重新附着、绑定新控制器，先验收原页，再正常续跑一次；
-   若仍有验证码立即再次断开。B 在验证码出现时立即停止电脑输入，不换工具继续读页。
+   只有用户明确回复继续后才重新附着、绑定新控制器，重新核验指定原标签；仍受限的页
+   标记后跳过，全部不可用再次断开。B 沿用原单页人工交接，不以网站挑战为理由改用 B。
    断开只释放本采集器的连接，不声称清除了此前接管影响或其他客户端连接；现有检查
    触发即处理，不承诺验证码出现后毫秒级检测。
 7. 普通错误恢复：优先沿用当前连接，先读取当前 URL/完整 DOM 检查验证码，再按身份和
    字段验收。`goto` 超时先读当前 DOM，若已完整则继续解析，不把超时本身当失败或验证码。
    空白/加载中页面、缺少当前 PDP、残留 ShopPage 或内嵌 JSON 截断时，先离线检查已有 DOM；
    正常无挑战的页面最多追加两次完整读取，常规循环内仅允许一次同一本轮详情 URL 的正常重载，
-   其余读取前退避 1/2 秒。仍未恢复时，宿主离线诊断确认确属普通加载问题后可用第二次、也是
+   其余读取前退避 5/10 秒。仍未恢复时，宿主离线诊断确认确属普通加载问题后可用第二次、也是
    最后一次正常重载；同一商品不得通过重开循环重置重试预算。不得补齐/猜测截断 JSON，
    每次取得新 DOM 后重新核对身份和完整字段，通过后才加入 details 并推进保存计数。
    普通异常先补存尾批再自动诊断，不要求用户回复继续；耗尽有限恢复仍缺必需字段时保留
@@ -226,7 +249,7 @@ script[type="text/mfe-initial-data"] JSON
 models_complete/gallery_complete 只有完整现场证据才设 true；声明和结构检查不是
 来源证明。任一未解决缺失不能发布全量正式表，但必须按第 8 节保存已取得的进度。
 
-## 8. S5～S6：内存发布与独立验收
+## 8. S5～S7：内存发布、独立验收与每日分析
 
 ### 采集中与停止时保存（长期默认规则）
 
@@ -248,7 +271,8 @@ models_complete/gallery_complete 只有完整现场证据才设 true；声明和
   `UGREEN_ARTIFACT_NODE_MODULES`，未设置时使用 Codex 运行时依赖缓存，不改依赖目录。
 - 进度写入保留日期注册、启动日、路径与字段检查；允许主根有维护改动时先保存已有数据，
   不要求为了保全数据先提交 Git，不热补日期源码。正式发布也不检查 clean/同 HEAD。
-- 先断开浏览器再保存尾批；保存失败保留上一份有效进度表、内存和暂停状态，报告失败，
+- 多页风控先停止操作受限页、保存尾批再接管下一页；单页、全部不可用或停止时先断开再保存。
+  保存失败保留上一份有效进度表、内存和暂停状态，报告失败，
   不继续采集。未知文件、其他轮次或会丢失已保存身份/详情的覆盖必须拒绝。
 
 ### 进程重启后的断点续采
@@ -303,15 +327,31 @@ stdin = 本轮完整 UTF-8 JSON
 ID 为文本、价格为数值、未展示月销为空、外部文字不得生成公式。图片是链接，不是
 内嵌图片。逐列、顺序、冻结窗格与 17 项核验以 excel-output.md 为准。
 
-发布退出 0 后独立运行：
+发布退出 0 后先生成分析报告（内部独立重开验收 Excel），再运行最终独立验收：
 
 ```text
-argv = [PYTHON, DAILY_RUNNER, "--validate", "--project-root", ROOT, "--worktree", DAILY]
+argv = [PYTHON, ROOT_RUNNER, "--analyze", "--project-root", ROOT, "--worktree", DAILY]
+argv = [PYTHON, ROOT_RUNNER, "--validate", "--project-root", ROOT, "--worktree", DAILY]
+argv = [PYTHON, ROOT_RUNNER, "--archive", "--project-root", ROOT, "--worktree", DAILY]
 cwd = DAILY
 ```
 
 核对 collection_mode=full_topsales、audit_status=通过、计数一致、
-result 只含正式表及可选的规定进度表。Excel 验收只证明内部一致，必须结合本轮全部现场覆盖才算全量完成。
+result 只含正式表、规定分析 PDF 及可选进度表。Excel 验收只证明内部一致，必须结合本轮全部现场覆盖。
+
+### 每日分析与共同交付
+
+全量任务在正式 Excel 发布后继续读取 [每日分析合同](references/daily-analysis.md)，执行
+`ROOT_RUNNER --analyze --project-root ROOT --worktree DAILY`（分析器先验收源表），再执行同一入口的 `--validate`。
+报告回执和独立验收中的 `analysis.analysis_status` 均须为“通过”；随后 `--archive` 成对提交 Excel/PDF 到日期分支，回读哈希通过后交付。
+
+报告必须覆盖每个产品月销及价格的日变化值/变化率、7/30 日趋势，店铺月销上涨/下滑链接数、
+新出现链接与 30 日趋势、可观测总月销、估算月销额、每个产品单件价格/客单价代理、固定价格段
+销量占比与链接动销。月销是滚动展示下界，不能由差值反推当天订单；真实订单客单价和上架时间
+没有来源时不编造。历史不足照样交付基线报告，缺口明确留空，不补零、不造趋势。
+只读取验收通过的完整历史 Excel，按店铺/商品 ID 关联，不改 Excel 内容、不增加工作表。
+补分析明确指定的旧日期时用主根新入口，不热补历史源码或重新采集。结果固定为
+`DAILY/result/ugreen_topsales_analysis.pdf`，完整定义、默认价格段、来源和复算验收见上述合同。
 
 ## 9. 实现边界、证据与交付
 
@@ -319,11 +359,13 @@ result 只含正式表及可选的规定进度表。Excel 验收只证明内部�
 | --- | --- |
 | run_scrape.py / prepare_daily_worktree.py | 计划、规范检查、日期准备、stdin 分派 |
 | publish_result.py / excel.py / validate_result.py | 严格转换、门禁、四表发布与独立验收 |
+| analysis_pdf.py / snapshot_history.py | PDF 确定性排版与中文字体、日期分支成对归档、按采集时间回读 Git 历史 |
+| analysis_report.py | 只读每日完整快照，计算跨日指标和 7/30 日趋势，发布及复算验收 PDF |
 | checkpoint_result.py / checkpoint_excel.mjs | 每 50 件与停止尾批的累计进度 Excel、原子替换和逐单元格回读；不联网 |
 | checkpoint_resume.py / checkpoint_state.py | 同轮进度的冷启动恢复、身份待办差集和工作簿内恢复部件；不操作浏览器 |
 | list_html.py | 只在内存解析列表 HTML |
 | page_browse.py | 验证码交接及可选滚轮浏览；默认由宿主完整 DOM 直读，普通错误自动恢复，不连接/启动浏览器 |
-| pacing.py | 保留旧 2.5 倍换算实现；本次仅更新规范，宿主按第 4.5 项执行 5 倍等待，不重复缩放 |
+| pacing.py | 保留旧 2.5 倍换算；宿主按第 4.5 项直接使用最终等待秒数，不套用旧倍率 |
 | scraper.py / capture_list_page.cjs | 业务解析与内部遗留编排；旧私有 profile 启动不是 A 接管器，公开 CLI 不调用它 |
 
 旧解析器的无条件占位 SKU、无条件拼 CDN、单图回退和旧标题优先级不能直接用于正式事实；
@@ -343,8 +385,8 @@ result 只含正式表及可选的规定进度表。Excel 验收只证明内部�
 字段/身份/模板验收失败报告具体缺口，不补造全量结果；已验收数据按第 8 节保存进度。
 内存丢失后先按第 8 节从本轮累计进度恢复，不从其他轮次或规范模板回填。
 恢复能力覆盖保存成功的断点；上次保存之后尚未落盘的尾部需要重新现场读取。
-不落盘 HTML/JSON/截图/trace/响应/会话；允许累计进度 Excel 和写表模块受控候选。
+不落盘 HTML/JSON/截图/trace/响应/会话；允许规定 Excel、每日分析 PDF 及各自受控候选。
 
-正式交付仅为日期 result/ugreen_topsales.xlsx，报告真实路线、列表/商品/SKU/主副图
-数量和独立验收，给可用链接或附件；不以本地路径冒充已发送到手机，不声称图片已内嵌。
+正式交付为日期 result/ugreen_topsales.xlsx 和 result/ugreen_topsales_analysis.pdf，报告真实路线、
+列表/商品/SKU/主副图数量、历史覆盖与独立验收，给两份可用链接或附件；不以本地路径冒充已发送到手机，不声称图片已内嵌。
 持续执行按要求发送中文进度；完成或交还用户后不空转。
