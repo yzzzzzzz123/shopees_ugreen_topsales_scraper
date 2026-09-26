@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import re
 from typing import Any
-from urllib.parse import unquote, urljoin, urlsplit
+from urllib.parse import parse_qs, unquote, urljoin, urlsplit
 
 from lxml import etree
 from lxml.html import HTMLParser, HtmlElement, fromstring
@@ -106,7 +106,8 @@ def _challenge(tree: HtmlElement, raw: str, final_url: str, title: str) -> bool:
 
 
 def parse_list_html(
-    html: str, *, final_url: str, expected_shop_id: str, page_index: int
+    html: str, *, final_url: str, expected_shop_id: str, page_index: int,
+    allow_stale_bootstrap: bool = False,
 ) -> dict[str, Any]:
     """解析一次 HTML 快照；不生成或保存 HTML、JSON、截图等中间文件。"""
     if not isinstance(html, str):
@@ -115,6 +116,8 @@ def parse_list_html(
         raise ValueError("列表 page_index 必须为非负整数")
     if not isinstance(final_url, str) or not isinstance(expected_shop_id, str):
         raise ValueError("列表 URL 与 shop ID 必须为字符串")
+    if type(allow_stale_bootstrap) is not bool:
+        raise ValueError("旧初始化数据兼容开关必须为布尔值")
     try:
         raw = html.encode("utf-8")
         tree = fromstring(raw, parser=HTMLParser(encoding="utf-8", no_network=True))
@@ -125,8 +128,7 @@ def parse_list_html(
     if len(raw) < MIN_HTML_BYTES:
         errors.append(f"列表 HTML 过小：{len(raw)} 字节，至少需要 {MIN_HTML_BYTES} 字节")
     embedded_pages = {int(value) for value in SEARCH_PAGE_RE.findall(html)}
-    if embedded_pages and page_index not in embedded_pages:
-        errors.append(f"嵌入 searchParams.page 与请求页 {page_index} 不一致")
+    bootstrap_mismatch = bool(embedded_pages and page_index not in embedded_pages)
 
     title = _clean(tree.xpath("string(//title)"))
     current_values = _unique_pager_values(tree, "shopee-mini-page-controller__current", errors)
@@ -211,6 +213,46 @@ def parse_list_html(
         next_button.get("disabled") is not None
         or "disabled" in next_button.get("class", "").split()
     )
+    if bootstrap_mismatch:
+        # SPA 切页不会改写初始 script；只在当前可见列表的整组证据一致时兼容。
+        # 默认仍保留旧门禁；调用方必须明确选择，不能无条件忽略页码冲突。
+        live_consistent = False
+        if allow_stale_bootstrap and not errors:
+            try:
+                url = urlsplit(final_url)
+                query = parse_qs(url.query)
+                total = int(total_values[0])
+                more = page_index < total - 1
+                selected = [
+                    _clean(node.text_content()) for node in
+                    _class_nodes(tree, "sort-by-options__option--selected")
+                ]
+                live_consistent = (
+                    url.scheme == "https" and url.netloc == "shopee.ph"
+                    and url.path.rstrip("/") == "/ugreen.ph" and not url.fragment
+                    and query.get("page") == [str(page_index)]
+                    and query.get("sortBy") == ["sales"] and query.get("tab") == ["0"]
+                    and query.get("shop", [expected_shop_id]) == [expected_shop_id]
+                    and current_values == [str(page_index + 1)] and 0 <= page_index < total
+                    and selected == ["Top Sales"] and len(views) == 1
+                    and len(anchors) == len(cards)
+                    and (len(cards) == 30 if more else 1 <= len(cards) <= 30)
+                    and len(next_buttons) == 1 and next_disabled is (not more)
+                )
+                if live_consistent and more:
+                    next_parts = urlsplit(next_url or "")
+                    next_query = parse_qs(next_parts.query)
+                    live_consistent = (
+                        next_parts.scheme == "https" and next_parts.netloc == "shopee.ph"
+                        and next_parts.path.rstrip("/") == "/ugreen.ph" and not next_parts.fragment
+                        and next_query.get("page") == [str(page_index + 1)]
+                        and next_query.get("sortBy") == ["sales"] and next_query.get("tab") == ["0"]
+                        and next_query.get("shop", [expected_shop_id]) == [expected_shop_id]
+                    )
+            except (ValueError, IndexError):
+                live_consistent = False
+        if not live_consistent:
+            errors.append(f"嵌入 searchParams.page 与请求页 {page_index} 不一致")
     return {
         "challenge": _challenge(tree, html, final_url, title),
         "final_url": final_url,

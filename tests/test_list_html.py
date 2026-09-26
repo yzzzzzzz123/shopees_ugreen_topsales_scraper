@@ -268,6 +268,60 @@ class ListHtmlTests(unittest.TestCase):
         self.assertLess(len(unicode_padding), MIN_HTML_BYTES)
         self.assertEqual(parse(unicode_padding)['errors'], [])
 
+    def test_stale_bootstrap_requires_opt_in_and_complete_current_dom(self) -> None:
+        selected = '<button class="sort-by-options__option--selected">Top Sales</button>'
+        head = '<script>{"searchParams":{"page":3}}</script>'
+        cards = ''.join(card(str(i)) for i in range(100, 130))
+        html = document(cards, head=head, body=selected)
+        self.assertTrue(parse(html)['errors'])
+        payload = parse_list_html(html, final_url=URL, expected_shop_id=SHOP_ID,
+                                  page_index=0, allow_stale_bootstrap=True)
+        self.assertEqual(payload['errors'], [])
+        self.assertEqual(len(payload['cards']), 30)
+        self.assertEqual(payload['cards'][0]['item_id'], '100')
+
+        cases = [
+            (document(cards, head=head, body=selected, current='2'), URL),
+            (document(cards, head=head, body=selected, total='0'), URL),
+            (document(cards, head=head, body=selected.replace('Top Sales', 'Popular')), URL),
+            (document(cards, head=head), URL),
+            (document(cards, head=head, body=selected, views=0), URL),
+            (document(cards, head=head, body=selected, button=''), URL),
+            (document(cards, head=head, body=selected, next_link=''), URL),
+            (document(cards, head=head, body=selected,
+                      next_link='<link rel="next" href="?page=9&sortBy=sales&tab=0">'), URL),
+            (document(cards.replace(card('129'), ''), head=head, body=selected), URL),
+            (document(cards + card('100'), head=head, body=selected), URL),
+            (document(cards.replace(PRICE, ''), head=head, body=selected), URL),
+            (html, URL.replace('page=0', 'page=1')),
+            (html, URL.replace('sales', 'pop')),
+            (html, URL.replace(SHOP_ID, '222')),
+            (html, URL.replace('shopee.ph', 'shopee.ph.evil.example')),
+        ]
+        for invalid_html, final_url in cases:
+            with self.subTest(final_url=final_url, size=len(invalid_html)):
+                rejected = parse_list_html(invalid_html, final_url=final_url,
+                                           expected_shop_id=SHOP_ID, page_index=0,
+                                           allow_stale_bootstrap=True)
+                self.assertTrue(any('searchParams.page' in e for e in rejected['errors']))
+
+    def test_stale_bootstrap_last_page_keeps_real_count_and_disabled_state(self) -> None:
+        html = document(
+            ''.join(card(str(i)) for i in range(100, 105)), current='2', total='2',
+            head='<script>{"searchParams":{"page":0}}</script>', next_link='',
+            body='<button class="sort-by-options__option--selected">Top Sales</button>',
+            button='<button class="shopee-mini-page-controller__next-btn" disabled></button>',
+        )
+        payload = parse_list_html(html, final_url=URL.replace('page=0', 'page=1'),
+                                  expected_shop_id=SHOP_ID, page_index=1,
+                                  allow_stale_bootstrap=True)
+        self.assertEqual(payload['errors'], [])
+        self.assertEqual(len(payload['cards']), 5)
+        self.assertTrue(payload['next_disabled'])
+        with self.assertRaises(ValueError):
+            parse_list_html(html, final_url=URL, expected_shop_id=SHOP_ID,
+                            page_index=0, allow_stale_bootstrap='yes')
+
     def test_unparseable_html_or_invalid_arguments_fail_without_echoing_html(self) -> None:
         for html in ('', '   ', None, '\ud800'):
             with self.subTest(html=repr(html)):
